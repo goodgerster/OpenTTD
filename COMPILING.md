@@ -83,7 +83,7 @@ in the build folder are MSVC project files. MSVC can rebuild the project
 files himself via the `ZERO_CHECK` project.
 
 ## All other platforms
-Minimum required version of CMake is 3.16.
+Minimum required version of CMake is 3.22.
 By default this produces a Debug build with assertations enabled.
 This is a far slower build than release builds.
 

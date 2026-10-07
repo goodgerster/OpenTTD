@@ -1,9 +1,5 @@
-cmake_minimum_required(VERSION 3.17)
-
-# The Rust cxx bridge headers are generated in rust/ and used by targets in other directories.
-if(POLICY CMP0118)
-    cmake_policy(SET CMP0118 NEW)
-endif()
+# 3.22 is required by Corrosion (cmake/3rdparty/corrosion), which builds the Rust code.
+cmake_minimum_required(VERSION 3.22)
 
 if(NOT BINARY_NAME)
     set(BINARY_NAME openttd)
@@ -22,7 +18,8 @@ if (EMSCRIPTEN)
 endif()
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake")
-set(CMAKE_OSX_DEPLOYMENT_TARGET 10.15)
+# Apple silicon only; 11.0 is the first macOS release that supports it.
+set(CMAKE_OSX_DEPLOYMENT_TARGET 11.0)
 
 # Use GNUInstallDirs to allow customisation
 # but set our own default data and bin dir

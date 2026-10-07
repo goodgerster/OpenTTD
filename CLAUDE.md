@@ -138,6 +138,7 @@ The `Rust checks` workflow runs these on pull requests.
 - Dependencies must be compatible with GPL-2.0-only (`rust/deny.toml`). A crate licensed only under Apache-2.0 can't be linked into the game.
 
 ### Porting procedure
+0. **Choose what to port.** Each later jgrpp merge that touches a ported file has to be reimplemented by hand, so prefer files that rarely change. `docs/port-churn.md` ranks files by changes per year; regenerate it with `utils/port_churn.py` (its docstring says how to fetch the history it needs).
 1. **Pin the current behaviour.** Before porting, make sure the existing Catch2 tests pin the behaviour, adding characterisation tests where they don't.
 2. **Write the Rust tests first, then the Rust code.** These are unit and property tests in the Rust crate.
 3. **Keep the original as a reference.** Move the original C++ implementation into the test file, inside `namespace cpp_reference`. Add a differential test that compares it with the ported function on edge cases and a deterministic sample of inputs (example: `src/tests/math_func.cpp`).
