@@ -10,24 +10,41 @@ Each entry says how it was found and how sure the finding is.
 
 Actionable, most important first:
 
-1. **Fixed in this fork:** assertion failure in Debug builds when a crashed
+1. **Desync from a console command** (upstream #12059): `setting_newgame`
+   runs a setting's change callback against the live game; for
+   `freeform_edges` that rewrites the map border on one client only.
+2. **Cargo income arithmetic** (`src/economy.cpp`): a negative profit
+   callback result becomes a huge positive income, and large deliveries over
+   long distances wrap a 32-bit product. Deterministic, but wrong; a Rust
+   port with overflow checks would abort, so it needs a deliberate decision.
+3. **Crashes reported in the trackers and still possible here:** a use after
+   free in the story book when a game script changes pages (upstream
+   #10566); an assertion after loading some savegames (upstream #14726); a
+   YAPF assertion with jgrpp's reversing nodes (jgrpp #812, cause unknown).
+4. **Fixed in this fork:** assertion failure in Debug builds when a crashed
    train whose last wagon is in a depot is cleared away
    (`DeleteLastWagon` in `src/train_cmd.cpp`). Present in latest jgrpp;
    upstream fixed its own variant in `1ea8a4cab`. Covered by the
    `regression_crashed_train_depot` test, which fails without the fix in
    builds with `dbg_assert`.
-2. **Stale vehicle caches while loading** (upstream `e60411035`): affects
-   station ratings through `cached_max_speed`. Deterministic, so no desync.
-3. **Vehicle reliability can stay above its model's reliability** (upstream
-   `ecbe2aa17`): affects breakdown chances.
-4. **Dual-headed engines' purchase capacity ignores the capacity callback for
-   the rear head** (upstream `5ac4eb48c`): wrong in the purchase list and in
-   `ScriptEngine::GetCapacity`.
-5. Four GUI problems with fonts and widget sizes, one with the map generator
-   window, and misfiled debug messages (upstream fixes listed below).
-6. **Latent:** real-time timers iterate over a container that their callbacks
-   must not change; game-tick timers iterate over a copy that can hold
-   dangling pointers if a callback deletes another timer.
+5. **Game logic present here and fixed upstream but not merged yet:** stale
+   vehicle caches while loading (`e60411035`, affects station ratings);
+   reliability above the model's (`ecbe2aa17`, affects breakdowns);
+   dual-headed engines' purchase capacity (`5ac4eb48c`, also seen by AIs).
+6. **Game logic present here and open upstream:** about twenty bugs, among
+   them cargodist loading for a "no unloading" stop, a wrong timetable start
+   that stalls trains in jgrpp, ships losing a moved buoy, trains colliding
+   through depot walls, and the road pathfinder not costing its first tile.
+   See "From the issue trackers".
+7. **Savegames:** jgrpp 0.70 to 0.73.0 left wrong player-protection bits on
+   town houses (jgrpp #996), and nothing clears them on load.
+8. **Script-visible quirks** that scripts may rely on (listed under "Visible
+   to scripts"); any fix or port must keep them or change them deliberately.
+9. **Latent:** real-time timers iterate over a container that their
+   callbacks must not change; game-tick timers iterate over a copy that can
+   hold dangling pointers if a callback deletes another timer.
+10. Smaller GUI and platform problems, in fonts, widget sizes, SDL2 on
+    Wayland and X11, and macOS input.
 
 When merging upstream: `91e5f72f4` (hotkey modifiers) probably breaks jgrpp's
 polyline rail hotkeys, `5fcaa0982` (timers) does not fit jgrpp's timer
@@ -41,7 +58,7 @@ harmless with the current compiler flags but should not be carried into Rust.
 
 | Source | Covered | Not covered |
 | --- | --- | --- |
-| Issue trackers of jgrpp and upstream | Nothing (see below) | All open issues |
+| Issue trackers of jgrpp and upstream | All 115 open jgrpp issues and 216 open upstream issues, as exported on 2026-10-07 (issue text only) | Comment threads, closed issues |
 | Upstream fixes not yet merged into jgrpp | All 32 `Fix` commits on upstream `master` that are not in jgrpp | Fixes still in open upstream pull requests |
 | AddressSanitizer + UndefinedBehaviorSanitizer | Unit tests, script regression tests, five new games of one game year each, about 7 game years of the title game | Multiplayer, GUI interaction, NewGRFs, third-party AIs, large maps |
 | `known-bugs.md` | Upstream's list of bugs it will not fix | |
@@ -49,11 +66,8 @@ harmless with the current compiler flags but should not be carried into Rust.
 
 ### Issue trackers
 
-Not read. This session can clone public repositories but cannot use the
-GitHub API for repositories other than this fork, and attaching
-`JGRennison/OpenTTD-patches` with API access was refused. To include them,
-export the open issues with the GitHub CLI and commit the files (for example
-under `docs/issues/`):
+Exported with the GitHub CLI on 2026-10-07 (title, labels, dates and
+description; no comments):
 
 ```bash
 gh issue list -R JGRennison/OpenTTD-patches --state open --limit 2000 \
@@ -61,6 +75,16 @@ gh issue list -R JGRennison/OpenTTD-patches --state open --limit 2000 \
 gh issue list -R OpenTTD/OpenTTD --state open --limit 2000 \
     --json number,title,labels,createdAt,updatedAt,body,url > openttd-issues-open.json
 ```
+
+Each issue was classified, and each bug that can affect game state on Linux
+or macOS was looked up in this tree. Because the comment threads were not
+exported, a bug may have been diagnosed or worked around in discussion
+without that showing here.
+
+| Tracker | Open | Bugs | Feature requests | Questions | Other |
+| --- | --- | --- | --- | --- | --- |
+| jgrpp | 115 | 21 | 85 | 2 | 7 |
+| upstream | 216 | 168 | 35 | 6 | 7 |
 
 ## Findings
 
@@ -116,6 +140,87 @@ Notes on these fixes:
   run with Ctrl cleared, the first toggle is skipped but the second still
   happens, leaving the tool in remove mode. Check this when the change
   arrives with an upstream merge.
+
+### From the issue trackers
+
+"jgrpp" and "upstream" give the tracker; numbers are issue numbers there.
+Status: **present** means the faulty code was found in this tree;
+**unclear** means it was looked for but the cause was not found;
+**(re-checked)** marks findings that were checked a second time
+independently. Bugs that only affect Windows, Emscripten or a GUI detail are
+counted above but not listed.
+
+#### Desync and determinism
+
+| Issue | Problem | Status here |
+| --- | --- | --- |
+| upstream #12059 | The console command `setting_newgame` runs the setting's change callback as if the live game's setting had changed. For `construction.freeform_edges` that rewrites the map border, so a client that runs it desyncs, and in single player the border becomes sea while the game's setting is unchanged. jgrpp adds more callbacks of this kind. | **Present** (re-checked): `IntSettingDesc::ChangeValue` (`src/settings.cpp:1796`) via `src/settings.cpp:2004`; `UpdateFreeformEdges` (`src/settings_table.cpp:1051`). |
+| upstream #9079 | NewGRFs reading lazily filled vehicle caches can desync. | Unclear. Same cache design (`src/newgrf_engine.cpp:560-762`); jgrpp's cache check (`src/cachecheck.cpp:419-447`) would detect mismatches. |
+| upstream #15552 | Repeated desyncs on one server. | Unclear; little information. |
+
+#### Crashes on Linux and macOS
+
+| Issue | Problem | Status here |
+| --- | --- | --- |
+| upstream #10566 | Use after free in the story book window when a game script changes pages: the window keeps raw `StoryPage` pointers and rebuilds its list only during window updates, after input has been handled. | Present (`src/story_gui.cpp:43, 258, 860`). |
+| upstream #14726 | Assertion `load_unload_ticks != 0` after loading a savegame. | Same assertion (`src/economy.cpp:2450`) and no fix-up on load; cause of the state unknown. Relevant to loading vanilla saves. |
+| jgrpp #812 | YAPF assertion `n.estimate >= n.parent->estimate` (`src/pathfinder/yapf/yapf_destrail.hpp:204`). | Unclear. Possibly jgrpp's reverse-behind-signal nodes and their cost; root cause not found. The only open game-logic crash in jgrpp's tracker. |
+| upstream #11166 | Crash on a key press in the macOS text input code. | Unclear. The Cocoa callbacks dereference `GetFocusedTextbuf()` (`src/video/cocoa/cocoa_wnd.mm:1025-1173`), but each first checks `EditBoxInGlobalFocus()`, which rules out a null buffer in the normal case; cause not found. |
+| upstream #9691 | A client connecting over IPv6 through TURN crashes an IPv4-only server. | Unclear; `NOT_REACHED` in address-family switches remains (`src/network/core/address.cpp`). |
+
+#### Savegames
+
+| Issue | Problem | Status here |
+| --- | --- | --- |
+| jgrpp #996 | Town growth built player-protected houses. | Fixed (cherry-pick of upstream's fix), but saves from jgrpp 0.70 to 0.73.0 keep the wrong protection bits (`m3` bit 5) on houses, and nothing clears them on load. |
+| upstream #15139 | "Invalid town name generator" when loading an old save. | Unclear without the file. |
+
+#### Game logic
+
+| Issue | Problem | Status here |
+| --- | --- | --- |
+| none | Cargo income from the profit callback: `result * num_pieces` multiplies a signed `int` by an unsigned `uint`, so a negative callback result (allowed by the specification) gives a huge positive income. | **Present** (re-checked), `src/economy.cpp:1103`; same upstream. |
+| none (related to upstream #9719) | Cargo income: `dist * time_factor * num_pieces` is computed in 32 bits and passed to an `int32_t`, so it wraps for large deliveries over long distances (for example 2,100 units over 4,200 tiles at the highest time factor of 255). jgrpp's large maps and long trains make this easier to reach. In Rust with overflow checks on, this would abort. | **Present** (re-checked), `src/economy.cpp:1138, 1141`; same upstream. |
+| upstream #14734 | Cargodist loads cargo for a stop that has "no unloading". | Likely present in jgrpp's own order prediction (`src/order_cmd.cpp:600-608`). |
+| upstream #12980 | Timetable start is detected wrongly when the first manual order is reached; the reporter saw trains stall in jgrpp. | Present (`src/timetable_cmd.cpp:918-930`). |
+| upstream #12301 | A ship gets lost when a buoy is moved: the reused buoy gets a new location but orders keep the old destination tile. | Present (`src/waypoint_cmd.cpp:541-544`, `src/order_cmd.cpp:4280`). |
+| upstream #8424 | Trains collide through the back wall of a depot: the collision test uses distance only. | Present (`src/train_cmd.cpp:5272-5312`). |
+| upstream #15254 | A blocked road vehicle copies the speed of the vehicle in front without limiting it to its own maximum. | Present (`src/roadveh_cmd.cpp:1702, 1843, 1959, 2013`). |
+| upstream #15701 | The road pathfinder never charges the cost of its first tile after a depot or stop. | Present (`src/pathfinder/yapf/yapf_road.cpp:400-408`). |
+| upstream #15000 | The interest rate set in the scenario editor is not the one charged; the finance window shows the setting. | Present (`src/economy.cpp:1025`, `src/company_gui.cpp:390`). |
+| upstream #14624 | Without a configuration file, the link graph defaults are doubled. | Present (`src/settings.cpp:1279, 1526-1529`). |
+| upstream #11392 | Exclusive transport rights ignore neutral stations such as oil rigs. Visible to game scripts. | Present (`src/economy.cpp:1161`, `src/station_cmd.cpp:5118`). |
+| upstream #12891 | Timetable speeds entered by the player are stored one lower: input is rounded and display truncated, with `double` factors. | Present (`src/strings.cpp:1163-1177`). |
+| jgrpp #797 | Public road generation silently fails to connect to town roads of another road type, because a failed build is ignored. | Present (`src/road.cpp:808-823`). |
+| jgrpp #1004 | Long trains "too heavy" and slow since 0.72.0, probably related to trains driving backwards. | Unclear; root cause not found. |
+| upstream #8048 | A path reservation can survive a train crash. | Unclear. |
+| upstream #6503, #10193 | Trains jump by part of a tile when reversing at a line end; articulated trains shift. | Same code as upstream. |
+| upstream #8022, #12193, #12333, #13164 | Ship pathfinding: service loop, docking tile choice, dead ends after terraforming, detours. | Same code as upstream. |
+| upstream #14387, #15020, #15774, #16016, #8088, #15021 | Map generation: no farms (or no fields) near a low snow line; no desert or snow below 50% on flat maps; town count silently limited by available names; the scenario editor never advances `_tick_counter`, so trees there stay saplings. | Present. |
+
+#### Visible to scripts
+
+These are present and long-standing; AIs and game scripts may depend on
+them, so a fix or a port must keep them or change them deliberately.
+
+- upstream #5283: script commands ignore pause in single player but wait for unpause in multiplayer (`src/command.cpp:493-498`, `src/network/network_command.cpp:185`).
+- upstream #15893: calling an API function through `acall()` cannot issue commands (`src/script/api/script_object.cpp:271`).
+- upstream #14573: for trains, "no route to depot" is reported as `ERR_UNKNOWN` (`src/script/api/script_vehicle.hpp:46`).
+- upstream #16067: `IsBuildable` is true on a one-piece town road (`src/script/api/script_tile.cpp:42-44`).
+- upstream #10156: with `ai_developer_tools`, script settings look editable but cannot be changed (`src/script/script_gui.cpp:561-573`).
+- jgrpp #656: in wallclock games, the economy year starts at 1920 in new jgrpp games but at 1 in vanilla, and `GSDate` returns it unadjusted. Deliberate, but a port of the date code has to keep both.
+
+#### Linux and macOS front end
+
+- jgrpp #478: the Linux music driver here is extmidi (the dev shell has no FluidSynth); a player that exits at once still makes the playlist skip quickly.
+- upstream #12691 (Wayland mouse stays grabbed), jgrpp #818 (multi-monitor full screen on X11): present in the SDL2 driver, same as upstream.
+- upstream #10083: the cheats hotkey (Ctrl+Alt+C) cannot be typed on macOS, where Cmd maps to Meta.
+- upstream #15316 (cursor unusable on macOS 26.3), jgrpp #589 (cursor not updated on macOS), jgrpp #318 (repeated permission prompts for Documents, probably code signing): not checked.
+
+#### Fixed in jgrpp, still open upstream
+
+Keep jgrpp's version when merging upstream or porting: upstream #6618, #10028,
+#10132, #10948, #11034, #12128, #12651, #15098, #15178, #15556.
 
 ### Found by the sanitizers
 
