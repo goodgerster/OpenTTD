@@ -37,6 +37,11 @@ cmake --build . -j$(nproc)
   - configures `build/` with Ninja, `-DOPTION_DEDICATED=ON`, ccache as the compiler launcher and `-fuse-ld=mold`.
 
   It does not compile anything. Build with `cmake --build build --target all openttd_test`; Ninja picks the job count itself.
+- Build times measured on 4 cores:
+  - cold full build: about 10 minutes;
+  - full rebuild of `build/` at the same path with a warm ccache: about 40 s;
+  - one changed `.cpp`, compiled and relinked with mold: about 2 s.
+- ccache only hits for the same build directory path. Its keys include the build directory (`hash_dir`) and absolute paths, so a build in a differently named directory recompiles everything. Reuse `build/` rather than creating new build directories.
 - Other libraries (lzma, zlib, png, zstd, lzo, curl, freetype, fontconfig, harfbuzz, icu, opus) are optional; see `COMPILING.md` and the apt list in `.github/workflows/ci-linux.yml`.
 - Desync debugging: configure with `-DCMAKE_CXX_FLAGS_INIT="-DRANDOM_DEBUG"` (as the CI dedicated job does). Change `CXXFLAGS` only in a clean build directory, as they are cached.
 - If GRFCodec/NFORenum are installed, the build may regenerate `.grf` files in the source tree. CI fails if a build or test run modifies tracked files (`git diff --exit-code`), so disable `GRFCODEC_EXECUTABLE`/`NFORENUM_EXECUTABLE` in the CMake cache if that happens.
