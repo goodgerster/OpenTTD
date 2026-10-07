@@ -9,3 +9,4 @@ docs/source/*
 /vcpkg_installed
 *.tmp
 /rust/target
+__pycache__/
