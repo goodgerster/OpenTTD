@@ -445,6 +445,28 @@ TEST_CASE("BMP - reads an 8 bpp image bottom up")
 	CHECK(data.bitmap == std::vector<uint8_t>{4, 5, 6, 1, 2, 3});
 }
 
+TEST_CASE("BMP - pads 1 and 4 bpp rows after partly used bytes")
+{
+	/* Upstream OpenTTD computes this padding from the width rounded down to whole bytes,
+	 * and so reads every row after the first one byte late (see rust/PORTED.md). */
+	BmpInfo info{};
+	BmpData data{};
+
+	/* 1 bpp, width 9: 2 bytes per row, padded with 2 bytes. */
+	const uint8_t pixels1[] = {0x80, 0x80, 0, 0, 0xFF, 0xFF, 0, 0};
+	std::vector<uint8_t> file1 = MakeBmp(9, 2, 1, 0, 2, pixels1);
+	REQUIRE(BmpReadHeader(file1, info, data));
+	REQUIRE(BmpReadBitmap(file1, info, data));
+	CHECK(data.bitmap == std::vector<uint8_t>{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1});
+
+	/* 4 bpp, width 3: 2 bytes per row, padded with 2 bytes. */
+	const uint8_t pixels4[] = {0x12, 0x30, 0, 0, 0x45, 0x60, 0, 0};
+	std::vector<uint8_t> file4 = MakeBmp(3, 2, 4, 0, 16, pixels4);
+	REQUIRE(BmpReadHeader(file4, info, data));
+	REQUIRE(BmpReadBitmap(file4, info, data));
+	CHECK(data.bitmap == std::vector<uint8_t>{4, 5, 6, 1, 2, 3});
+}
+
 TEST_CASE("BMP - rejects files that are not BMPs")
 {
 	const uint8_t not_a_bmp[] = {'G', 'I', 'F', '8', '9', 'a'};
@@ -554,6 +576,12 @@ static bool MatchesReference(std::span<const uint8_t> file)
 
 	/* Like heightmap.cpp, only read the bitmap of images with valid dimensions. */
 	if (info.width == 0 || info.height == 0 || static_cast<uint64_t>(info.width) * info.height > 4096) return true;
+
+	/* The port fixes the reference's row padding for 1 and 4 bpp rows that end in a partly
+	 * used byte (see rust/PORTED.md), so such images only compare equal if they have one row. */
+	bool padding_fixed = info.compression == 0 && info.height > 1 &&
+			((info.bpp == 1 && info.width % 8 != 0) || (info.bpp == 4 && info.width % 2 != 0));
+	if (padding_fixed) return true;
 
 	ref_ok = cpp_reference::BmpReadBitmap(ref_file, ref_info, ref_data);
 	ok = BmpReadBitmap(file, info, data);

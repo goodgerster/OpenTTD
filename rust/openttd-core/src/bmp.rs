@@ -205,10 +205,9 @@ pub fn read_bitmap(file: &[u8], info: &BmpInfo, bitmap: &mut [u8]) -> bool {
     }
 }
 
-/// Row padding to a multiple of four bytes, computed like the original:
-/// `(4 - row_bytes) % 4` with unsigned wrapping. For 1 and 4 bpp the original
-/// passes `width / 8` and `width / 2`, rounded down, which is wrong for widths
-/// that are not a whole number of bytes.
+/// Row padding to a multiple of four bytes: `(4 - row_bytes) % 4`, computed
+/// with unsigned wrapping like the original. Unlike the original, 1 and 4 bpp
+/// rows count their last, partly used byte (see `rust/PORTED.md`).
 fn padding(row_bytes: u32) -> u64 {
     u64::from(4u32.wrapping_sub(row_bytes) & 3)
 }
@@ -220,7 +219,7 @@ fn rows_bottom_up(info: &BmpInfo, row_len: usize) -> impl Iterator<Item = usize>
 
 fn read_1bpp(f: &mut Reader, info: &BmpInfo, bitmap: &mut [u8]) -> bool {
     let width = info.width as usize;
-    let pad = padding(info.width / 8);
+    let pad = padding(info.width.div_ceil(8));
     for row in rows_bottom_up(info, width) {
         let mut x = 0;
         while x < width {
@@ -242,7 +241,7 @@ fn read_1bpp(f: &mut Reader, info: &BmpInfo, bitmap: &mut [u8]) -> bool {
 
 fn read_4bpp(f: &mut Reader, info: &BmpInfo, bitmap: &mut [u8]) -> bool {
     let width = info.width as usize;
-    let pad = padding(info.width / 2);
+    let pad = padding(info.width.div_ceil(2));
     for row in rows_bottom_up(info, width) {
         let mut x = 0;
         while x < width {
@@ -616,18 +615,26 @@ mod tests {
         assert_eq!(bitmap[31], 1);
     }
 
-    /// The original computes 1 bpp row padding from width / 8 instead of the
-    /// number of bytes per row, so widths that are not a multiple of 8 skip one
-    /// byte too many per row. This pins that behaviour until it is fixed.
+    /// Rows are padded to four bytes after the last partly used byte. The
+    /// original (and upstream OpenTTD) computed the padding from `width / 8`,
+    /// rounded down, and so read every row after the first one byte late.
     #[test]
-    fn pads_1bpp_rows_like_the_original() {
-        // Width 9 takes 2 bytes per row, so a correct file pads each row with 2 bytes;
-        // the original skips 3, so it reads the top row from bytes 5 and 6 instead of 4 and 5.
+    fn pads_1bpp_rows_after_partial_bytes() {
+        // Width 9 takes 2 bytes per row, so each row is padded with 2 bytes.
         let pixels = [0x80, 0x80, 0, 0, 0xFF, 0xFF, 0, 0];
         let file = windows_bmp(9, 2, 1, 0, &grey_palette(2), &pixels);
         let bitmap = decode(&file).unwrap();
-        assert_eq!(&bitmap[9..], [1, 0, 0, 0, 0, 0, 0, 0, 1]); // bottom row: correct
-        assert_eq!(&bitmap[..9], [1, 1, 1, 1, 1, 1, 1, 1, 0]); // top row: a correct decoder gives nine 1s
+        assert_eq!(&bitmap[9..], [1, 0, 0, 0, 0, 0, 0, 0, 1]);
+        assert_eq!(&bitmap[..9], [1; 9]);
+    }
+
+    /// As above, for 4 bpp, where the original computed the padding from `width / 2`.
+    #[test]
+    fn pads_4bpp_rows_after_partial_bytes() {
+        // Width 3 takes 2 bytes per row, so each row is padded with 2 bytes.
+        let pixels = [0x12, 0x30, 0, 0, 0x45, 0x60, 0, 0];
+        let file = windows_bmp(3, 2, 4, 0, &grey_palette(16), &pixels);
+        assert_eq!(decode(&file).unwrap(), [4, 5, 6, 1, 2, 3]);
     }
 
     #[test]
