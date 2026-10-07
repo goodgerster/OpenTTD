@@ -30,13 +30,19 @@ cmake --build . -j$(nproc)
 ```
 
 - A GUI build fails at configure time without SDL2 or Allegro development headers ("SDL2 or Allegro is required for this platform"). In headless containers, configure with `-DOPTION_DEDICATED=ON`. A dedicated build still compiles nearly all game and GUI code; only a few `#ifdef DEDICATED` blocks and the video, sound and font drivers differ.
-- Configuring requires CMake 3.22+ (for Corrosion, which builds the Rust code) and the Rust toolchain pinned in `rust-toolchain.toml` (`rustup toolchain install 1.97.0`).
-- In Claude Code cloud sessions, `.claude/hooks/session-start.sh`:
-  - installs the libraries a dedicated build uses, plus ccache, mold, Ninja and the pinned Rust toolchain;
-  - installs Ubuntu's `openttd-opengfx` package and links it into `~/.local/share/openttd/baseset`;
-  - configures `build/` with Ninja, `-DOPTION_DEDICATED=ON`, ccache as the compiler launcher and `-fuse-ld=mold`.
-
-  It does not compile anything. Build with `cmake --build build --target all openttd_test`; Ninja picks the job count itself.
+- Configuring requires CMake 3.22+ (for Corrosion, which builds the Rust code) and the Rust toolchain pinned in `rust-toolchain.toml`: either rustup (`rustup toolchain install 1.97.0`) or the Nix dev shell. CMake uses the first `rustc` in `PATH`.
+- `flake.nix` defines a dev shell (`nix develop`) with the whole toolchain: CMake, Ninja, ccache, the pinned Rust, cargo-deny and the libraries. It covers `aarch64-darwin` and `x86_64-linux`.
+- `.claude/hooks/session-start.sh` runs at session start and dispatches by environment.
+  - **Cloud sessions** (`session-start-cloud.sh`):
+    - Installs, via apt, the libraries a dedicated build uses, plus ccache, mold, Ninja and the pinned Rust toolchain.
+    - Installs Ubuntu's `openttd-opengfx` package and links it into `~/.local/share/openttd/baseset`.
+    - Configures `build/` with Ninja, `-DOPTION_DEDICATED=ON`, ccache and `-fuse-ld=mold`.
+    - For a new session, then builds `build/` in the background. **Wait until `build/warm-build.done` exists** (it holds the exit status) before building or testing in `build/`, and never run two builds in `build/` at once.
+  - **Local sessions on macOS** (`session-start-macos.sh`):
+    - Loads the Nix dev shell into Claude's Bash commands, via `build/nix-dev-env.sh` sourced from `CLAUDE_ENV_FILE`. In your own terminal, use `nix develop` or `source build/nix-dev-env.sh`.
+    - Downloads OpenGFX into `~/Documents/OpenTTD/baseset`.
+    - Configures a GUI `build/` with Ninja and ccache.
+- Build with `cmake --build build --target all openttd_test`; Ninja picks the job count itself.
 - Build times measured on 4 cores:
   - cold full build: about 10 minutes;
   - full rebuild of `build/` at the same path with a warm ccache: about 40 s;
