@@ -136,6 +136,9 @@ The `Rust checks` workflow runs these on pull requests.
 - Standard Rust style: rustfmt defaults, Rust naming and `///` doc comments. Do not carry the C++ conventions below over to Rust.
 - Dependencies must be compatible with GPL-2.0-only (`rust/deny.toml`). A crate licensed only under Apache-2.0 can't be linked into the game.
 
+### Changing C++ code
+A soft rule: C++ code should only shrink. To make a nontrivial change to a piece of C++ code, port that piece to Rust first (following the procedure below) and make the change in Rust. Trivial fixes, and changes to glue code that cannot sensibly be ported on its own, may stay in C++.
+
 ### Porting procedure
 0. **Choose what to port.** Each later jgrpp merge that touches a ported file has to be reimplemented by hand, so prefer files that rarely change. `docs/port-churn.md` ranks files by changes per year; regenerate it with `utils/port_churn.py` (its docstring says how to fetch the history it needs).
 1. **Pin the current behaviour.** Before porting, make sure the existing Catch2 tests pin the behaviour, adding characterisation tests where they don't.

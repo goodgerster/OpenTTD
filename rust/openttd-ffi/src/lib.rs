@@ -9,6 +9,7 @@
 //! namespace `ottd_rs`; keep the C++ wrappers thin.
 
 use openttd_core::bmp;
+use openttd_core::cargo_income::{self, CargoPaymentRates, PaymentAlgorithm};
 use openttd_core::math::{int_sqrt_u32, int_sqrt_u64};
 
 #[cxx::bridge(namespace = "ottd_rs")]
@@ -45,7 +46,53 @@ mod ffi {
         /// Decodes the bitmap of `file` into `bitmap`; returns false if the data
         /// is truncated or invalid. See `openttd_core::bmp::read_bitmap`.
         fn bmp_read_bitmap(file: &[u8], info: &BmpInfo, bitmap: &mut [u8]) -> bool;
+
+        /// Income for delivering cargo, from distance and transit time. `traditional`
+        /// selects the traditional payment algorithm. See
+        /// `openttd_core::cargo_income::income_from_transit_time`.
+        fn cargo_income_from_transit_time(
+            num_pieces: u32,
+            distance: u32,
+            transit_periods: u16,
+            cargo_transit_periods_1: u8,
+            cargo_transit_periods_2: u8,
+            current_payment: i64,
+            traditional: bool,
+        ) -> i64;
+
+        /// Income for delivering cargo from the result of the NewGRF cargo profit
+        /// callback. See `openttd_core::cargo_income::income_from_profit_callback`.
+        fn cargo_income_from_profit_callback(
+            callback_result: u16,
+            num_pieces: u32,
+            payment: i64,
+        ) -> i64;
     }
+}
+
+fn cargo_income_from_transit_time(
+    num_pieces: u32,
+    distance: u32,
+    transit_periods: u16,
+    cargo_transit_periods_1: u8,
+    cargo_transit_periods_2: u8,
+    current_payment: i64,
+    traditional: bool,
+) -> i64 {
+    let rates = CargoPaymentRates {
+        transit_periods: [cargo_transit_periods_1, cargo_transit_periods_2],
+        current_payment,
+    };
+    let algorithm = if traditional {
+        PaymentAlgorithm::Traditional
+    } else {
+        PaymentAlgorithm::Modern
+    };
+    cargo_income::income_from_transit_time(num_pieces, distance, transit_periods, &rates, algorithm)
+}
+
+fn cargo_income_from_profit_callback(callback_result: u16, num_pieces: u32, payment: i64) -> i64 {
+    cargo_income::income_from_profit_callback(callback_result, num_pieces, payment)
 }
 
 fn bmp_read_header(

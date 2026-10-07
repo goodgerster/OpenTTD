@@ -4,4 +4,5 @@
 //! the game state must be deterministic: see the Rust section of `CLAUDE.md`.
 
 pub mod bmp;
+pub mod cargo_income;
 pub mod math;

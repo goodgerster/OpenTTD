@@ -2,6 +2,7 @@ add_test_files(
     alternating_iterator.cpp
     bitmath_func.cpp
     bmp.cpp
+    cargo_income.cpp
     command.cpp
     enum_over_optimisation.cpp
     flatset_type.cpp

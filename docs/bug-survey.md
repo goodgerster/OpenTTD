@@ -13,37 +13,44 @@ Actionable, most important first:
 1. **Fixed in this fork: desync from a console command** (upstream #12059):
    `setting_newgame` ran some settings' change callbacks against the running
    game, on the client that used it only.
-2. **Cargo income arithmetic** (`src/economy.cpp`): a negative profit
-   callback result becomes a huge positive income, and large deliveries over
-   long distances wrap a 32-bit product. Deterministic, but wrong; a Rust
-   port with overflow checks would abort, so it needs a deliberate decision.
-3. **Crashes reported in the trackers and still possible here:** a use after
+2. **Fixed in this fork: cargo income arithmetic** (ported to Rust,
+   `openttd_core::cargo_income`): large deliveries over long distances, and
+   large deliveries with the profit callback, wrapped 32-bit products into
+   wrong (often negative) incomes.
+3. **`Money` arithmetic truncates 64-bit factors** (`OverflowSafeInt` in
+   `src/core/overflowsafe_type.hpp`, same upstream): multiplying by an
+   `int64_t`, a `uint` of 2^31 or more, or another `Money` cuts the factor
+   to `int` before the overflow check, and dividing an `int64_t` by `Money`
+   cuts the divisor. Some code depends on this by accident (see the profit
+   callback above), so it can't simply be changed; a Rust port of money
+   arithmetic must reproduce it or change it with every caller checked.
+4. **Crashes reported in the trackers and still possible here:** a use after
    free in the story book when a game script changes pages (upstream
    #10566); an assertion after loading some savegames (upstream #14726); a
    YAPF assertion with jgrpp's reversing nodes (jgrpp #812, cause unknown).
-4. **Fixed in this fork:** assertion failure in Debug builds when a crashed
+5. **Fixed in this fork:** assertion failure in Debug builds when a crashed
    train whose last wagon is in a depot is cleared away
    (`DeleteLastWagon` in `src/train_cmd.cpp`). Present in latest jgrpp;
    upstream fixed its own variant in `1ea8a4cab`. Covered by the
    `regression_crashed_train_depot` test, which fails without the fix in
    builds with `dbg_assert`.
-5. **Game logic present here and fixed upstream but not merged yet:** stale
+6. **Game logic present here and fixed upstream but not merged yet:** stale
    vehicle caches while loading (`e60411035`, affects station ratings);
    reliability above the model's (`ecbe2aa17`, affects breakdowns);
    dual-headed engines' purchase capacity (`5ac4eb48c`, also seen by AIs).
-6. **Game logic present here and open upstream:** about twenty bugs, among
+7. **Game logic present here and open upstream:** about twenty bugs, among
    them cargodist loading for a "no unloading" stop, a wrong timetable start
    that stalls trains in jgrpp, ships losing a moved buoy, trains colliding
    through depot walls, and the road pathfinder not costing its first tile.
    See "From the issue trackers".
-7. **Savegames:** jgrpp 0.70 to 0.73.0 left wrong player-protection bits on
+8. **Savegames:** jgrpp 0.70 to 0.73.0 left wrong player-protection bits on
    town houses (jgrpp #996), and nothing clears them on load.
-8. **Script-visible quirks** that scripts may rely on (listed under "Visible
+9. **Script-visible quirks** that scripts may rely on (listed under "Visible
    to scripts"); any fix or port must keep them or change them deliberately.
-9. **Latent:** real-time timers iterate over a container that their
-   callbacks must not change; game-tick timers iterate over a copy that can
-   hold dangling pointers if a callback deletes another timer.
-10. Smaller GUI and platform problems, in fonts, widget sizes, SDL2 on
+10. **Latent:** real-time timers iterate over a container that their
+    callbacks must not change; game-tick timers iterate over a copy that can
+    hold dangling pointers if a callback deletes another timer.
+11. Smaller GUI and platform problems, in fonts, widget sizes, SDL2 on
     Wayland and X11, and macOS input.
 
 When merging upstream: `91e5f72f4` (hotkey modifiers) probably breaks jgrpp's
@@ -179,8 +186,8 @@ counted above but not listed.
 
 | Issue | Problem | Status here |
 | --- | --- | --- |
-| none | Cargo income from the profit callback: `result * num_pieces` multiplies a signed `int` by an unsigned `uint`, so a negative callback result (allowed by the specification) gives a huge positive income. | **Present** (re-checked), `src/economy.cpp:1103`; same upstream. |
-| none (related to upstream #9719) | Cargo income: `dist * time_factor * num_pieces` is computed in 32 bits and passed to an `int32_t`, so it wraps for large deliveries over long distances (for example 2,100 units over 4,200 tiles at the highest time factor of 255). jgrpp's large maps and long trains make this easier to reach. In Rust with overflow checks on, this would abort. | **Present** (re-checked), `src/economy.cpp:1138, 1141`; same upstream. |
+| none | Cargo income from the profit callback: `result * num_pieces` multiplies a signed `int` by an unsigned `uint`, so the product wraps around as an unsigned 32-bit value. Negative multipliers still came out right, because `Money`'s multiplication truncates its factor to `int` (see the summary), but products beyond 2^31 (from about 131,000 units at the largest multiplier) gave wrong incomes. | **Fixed in this fork**, in the Rust port of the income arithmetic (`openttd_core::cargo_income`): computed in 64 bits; tests in Rust and in `src/tests/cargo_income.cpp`. |
+| none (related to upstream #9719) | Cargo income: `dist * time_factor * num_pieces` was computed in 32 bits and passed to an `int32_t`, so it wrapped for large deliveries over long distances (for example 2,100 units over 4,200 tiles at the highest time factor of 255), and the result was cut to 32 bits as well. jgrpp's large maps and long trains make this easier to reach. | **Fixed in this fork**, in the same Rust port: computed in 64 bits with a saturating multiplication; a differential test against the original C++ shows identical results wherever the original did not overflow. |
 | upstream #14734 | Cargodist loads cargo for a stop that has "no unloading". | Likely present in jgrpp's own order prediction (`src/order_cmd.cpp:600-608`). |
 | upstream #12980 | Timetable start is detected wrongly when the first manual order is reached; the reporter saw trains stall in jgrpp. | Present (`src/timetable_cmd.cpp:918-930`). |
 | upstream #12301 | A ship gets lost when a buoy is moved: the reused buoy gets a new location but orders keep the old destination tile. | Present (`src/waypoint_cmd.cpp:541-544`, `src/order_cmd.cpp:4280`). |
