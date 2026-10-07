@@ -1,0 +1,4 @@
+ERROR: [0] --CrashedTrainDepot--
+ERROR: [0]   Rail depots: 1
+ERROR: [0]   Vehicles before clean-up: 1
+ERROR: [0]   Vehicles after clean-up: 0

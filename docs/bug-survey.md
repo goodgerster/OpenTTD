@@ -10,9 +10,12 @@ Each entry says how it was found and how sure the finding is.
 
 Actionable, most important first:
 
-1. **Crash in Debug builds when a crashed train whose last wagon is in a
-   depot is cleared away** (`src/train_cmd.cpp:6521`). Present in latest
-   jgrpp; upstream fixed its own variant in `1ea8a4cab`. One-line fix.
+1. **Fixed in this fork:** assertion failure in Debug builds when a crashed
+   train whose last wagon is in a depot is cleared away
+   (`DeleteLastWagon` in `src/train_cmd.cpp`). Present in latest jgrpp;
+   upstream fixed its own variant in `1ea8a4cab`. Covered by the
+   `regression_crashed_train_depot` test, which fails without the fix in
+   builds with `dbg_assert`.
 2. **Stale vehicle caches while loading** (upstream `e60411035`): affects
    station ratings through `cached_max_speed`. Deterministic, so no desync.
 3. **Vehicle reliability can stay above its model's reliability** (upstream
@@ -88,7 +91,7 @@ where neither applies.
 | `a7755dbf7` | Fix: Wrong category for some base set debug messages | **Present** (`src/base_media_func.h:251`, `src/music.cpp:142, 148, 180`). | diagnostics |
 | `4b5f010b4`, `2237b6b97` | Double-clicking a depot or waypoint order; glyphs for whitespace | Already fixed here, with jgrpp's own code. | |
 | `5fcaa0982` | Fix #16053: Crash due to undefined behaviour when leaving screensaver mode | Not affected: jgrpp's game-tick timers are run from a copied vector (`src/timer/timer_game_tick.cpp:51`). Do not port the upstream change as written; see the note below. | |
-| `1ea8a4cab` | Fix #15990, c9cf1418139: Game crash when clearing up crashed train with last wagon in depot | **Present in jgrpp's own form.** Upstream's cause is not here, but `GetTrackbitsFromCrashedVehicle` returns `TRACK_BIT_NONE` for a wagon in a depot (`src/train_cmd.cpp:6441`), and `DeleteLastWagon` then calls `TrackBitsToTrack(TRACK_BIT_NONE)` (`src/train_cmd.cpp:6521`). That fails a `dbg_assert` (`src/track_func.h:195`), which is compiled only in Debug builds or with `OPTION_DBG_ASSERTS` (in CI, only the macOS Debug job). Other builds are unaffected (the result is not used). Latest jgrpp has the same code. Fix: compute the track only when `trackbits != TRACK_BIT_NONE`. | crash (Debug builds) |
+| `1ea8a4cab` | Fix #15990, c9cf1418139: Game crash when clearing up crashed train with last wagon in depot | **Fixed in this fork** (was present in jgrpp's own form). Upstream's cause is not here, but `GetTrackbitsFromCrashedVehicle` returns `TRACK_BIT_NONE` for a wagon in a depot (`src/train_cmd.cpp:6441`), and `DeleteLastWagon` then calls `TrackBitsToTrack(TRACK_BIT_NONE)` (`src/train_cmd.cpp:6521`). That fails a `dbg_assert` (`src/track_func.h:195`), which is compiled only in Debug builds or with `OPTION_DBG_ASSERTS` (in CI, only the macOS Debug job). Other builds are unaffected (the result is not used). Latest jgrpp has the same code. Fix: compute the track only when `trackbits != TRACK_BIT_NONE`. | crash (Debug builds) |
 | `ecbe2aa17` | Fix: Limit vehicle reliability to the model's current maximum reliability | **Present.** `src/vehicle.cpp:2304` clamps the decreased reliability at 0 but not at the engine's current reliability. jgrpp's `reliability_decay_speed` setting and the cases without decay make it likelier that a vehicle stays above its model. | game |
 | `e60411035` | Fix: invalidate/update vehicle caches when vehicle is marked dirty | **Present.** `Train::MarkDirty` (`src/train_cmd.cpp:4981`) only calls `CargoChanged()`; the road vehicle and aircraft versions refresh no caches. `cached_max_speed` can therefore be stale while loading, and `src/economy.cpp:2202-2217` uses it for the station rating. Not a desync: jgrpp's VENC chunk sends the server's cached values to joining clients. A port would use jgrpp's `ConsistChanged(CCF_LOADUNLOAD)`. | game |
 | `ee77792ed` | Fix: Terrain average height setting only applies to TerraGenesis | **Present.** `src/genworld_gui.cpp:607-609` leaves the average height dropdown enabled for the original generator, which ignores it (`src/tgp.cpp:548` is the only reader). | GUI |

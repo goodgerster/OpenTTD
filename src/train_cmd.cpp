@@ -6518,8 +6518,9 @@ static void DeleteLastWagon(Train *v)
 	delete v;
 	v = nullptr; // make sure nobody will try to read 'v' anymore
 
-	Track track = TrackBitsToTrack(trackbits);
-	if (HasReservedTracks(tile, trackbits)) {
+	/* A wagon in a depot has no track bits (see GetTrackbitsFromCrashedVehicle). */
+	if (trackbits != TRACK_BIT_NONE && HasReservedTracks(tile, trackbits)) {
+		Track track = TrackBitsToTrack(trackbits);
 		UnreserveRailTrack(tile, track);
 
 		/* If there are still crashed vehicles on the tile, give the track reservation to them */
@@ -6553,7 +6554,7 @@ static void DeleteLastWagon(Train *v)
 	if ((orig_trackbits & TRACK_BIT_WORMHOLE) || IsRailDepotTile(tile)) {
 		UpdateSignalsOnSegment(tile, DiagDirection::Invalid, owner);
 	} else {
-		SetSignalsOnBothDir(tile, track, owner);
+		SetSignalsOnBothDir(tile, TrackBitsToTrack(trackbits), owner);
 	}
 }
 
