@@ -31,10 +31,10 @@ cmake --build . -j$(nproc)
 
 ## Tests
 
-The unit-test binary `openttd_test` (Catch2, sources in `src/tests/`) is `EXCLUDE_FROM_ALL`, so it must be built explicitly before `ctest`:
+The unit-test binary `openttd_test` (Catch2, sources in `src/tests/`) is `EXCLUDE_FROM_ALL`, so it must be built explicitly before `ctest`. Build `all` too: the `regression_files` target, which copies the regression scripts into the build tree, is only part of `all`.
 
 ```bash
-cmake --build . -j$(nproc) --target openttd openttd_test
+cmake --build . -j$(nproc) --target all openttd_test
 ctest -j$(nproc) --timeout 120                 # what CI runs: unit tests + script regression tests
 ctest -R 'FindLastBit'                         # one test, by regex over discovered names
 ./openttd_test "FindLastBit tests"             # one Catch2 TEST_CASE, run directly
@@ -42,8 +42,9 @@ ctest -R 'FindLastBit'                         # one test, by regex over discove
 ```
 
 - Each Catch2 `TEST_CASE` is registered as a separate ctest test via `catch_discover_tests`. New test files must be added to `add_test_files(...)` in `src/tests/CMakeLists.txt`.
-- Script regression tests live in `regression/<name>/` (`main.nut`, `test.sav`, expected `result.txt`). They run the real `openttd` binary headlessly (`-x -snull -mnull -vnull:ticks=30000`) and compare script output with `result.txt`. Run them with `cmake --build . --target regression` (more verbose) or `ctest -R regression_`. CI installs the OpenGFX baseset into `~/.local/share/openttd/baseset` first.
-- Other CI checks you can run locally: `python3 .github/unused-strings.py` and `python3 .github/script-missing-mode-enforcement.py` (script API functions that issue commands or read the company must call one of the `Enforce*Mode*` macros).
+- Script regression tests live in `regression/<name>/` (`main.nut`, `test.sav`, expected `result.txt`). They run the real `openttd` binary headlessly (`-x -snull -mnull -vnull:ticks=30000`) and compare script output with `result.txt`. Run them with `cmake --build . --target regression` (more verbose) or `ctest -R regression_`. They need a graphics baseset: without one the game exits with "Failed to find a graphics set" and all `regression_*` tests fail. CI first unzips OpenGFX (`https://cdn.openttd.org/opengfx-releases/0.6.0/opengfx-0.6.0-all.zip`) into `~/.local/share/openttd/baseset`.
+- The other check that runs on pull requests is `python3 .github/script-missing-mode-enforcement.py` (prints `OK`). It requires script API functions that issue commands or read the company to call one of the `Enforce*Mode*` macros.
+- `.github/unused-strings.py` is upstream's. Its workflow is manual-only here, and on this tree it reports about 1,950 strings as possibly unused. Nearly all of them come from `src/lang/extra/english.txt` and are in fact referenced in code, so its output is not a usable pass/fail signal.
 
 ## Architecture
 
