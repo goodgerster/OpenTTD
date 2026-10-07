@@ -1,0 +1,252 @@
+# Builds a signed and notarized OpenTTD.app for Apple silicon.
+#
+# Runs for tags starting with "v" (published as a GitHub release; tags with a
+# "-", such as v1.0-rc1, as a prerelease) and on manual runs (artifact only).
+#
+# Unlike CI, this does not build in the Nix dev shell: those binaries link to
+# libraries in /nix/store and do not run on other Macs. It uses Xcode's clang
+# with static libraries from vcpkg instead, like upstream's release-macos.yml.
+#
+# Secrets, in the "release" environment:
+#   MACOS_CERTIFICATE_P12_BASE64  Developer ID Application certificate and key (.p12), base64
+#   MACOS_CERTIFICATE_PASSWORD    Password of the .p12
+#   MACOS_SIGNING_IDENTITY        "Developer ID Application: Name (TEAMID)"
+#   NOTARY_KEY_P8_BASE64          App Store Connect team API key (.p8), base64
+#   NOTARY_KEY_ID                 Its key ID
+#   NOTARY_ISSUER_ID              Its issuer ID
+
+name: Release (macOS, signed)
+
+on:
+  push:
+    tags:
+    - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build, sign and notarize
+    runs-on: macos-latest
+    environment: release
+    env:
+      MACOSX_DEPLOYMENT_TARGET: 11.0
+
+    steps:
+    - name: Check secrets
+      env:
+        MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+        MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+        NOTARY_KEY_P8_BASE64: ${{ secrets.NOTARY_KEY_P8_BASE64 }}
+        NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+        NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+      run: |
+        missing=""
+        for name in MACOS_CERTIFICATE_P12_BASE64 MACOS_CERTIFICATE_PASSWORD MACOS_SIGNING_IDENTITY \
+            NOTARY_KEY_P8_BASE64 NOTARY_KEY_ID NOTARY_ISSUER_ID; do
+          if [ -z "${!name}" ]; then missing="$missing $name"; fi
+        done
+        if [ -n "$missing" ]; then
+          echo "::error::Missing secrets in the release environment:$missing"
+          exit 1
+        fi
+
+    - name: Checkout
+      uses: actions/checkout@v7
+      with:
+        # The version string comes from `git describe --tags`.
+        fetch-depth: 0
+
+    - name: Setup Xcode
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: latest-stable
+
+    - name: Install Rust toolchain
+      # Installs the toolchain pinned in rust-toolchain.toml (rustup before 1.28 does so in `rustup show`).
+      run: |
+        rustup toolchain install || rustup show
+        rustc --version
+
+    - name: Setup vcpkg
+      id: vcpkg
+      uses: OpenTTD/actions/setup-vcpkg@v6
+
+    - name: Install dependencies
+      env:
+        HOMEBREW_NO_AUTO_UPDATE: 1
+        HOMEBREW_NO_INSTALL_CLEANUP: 1
+      run: |
+        # pandoc converts the licence for the disk image.
+        brew install pandoc
+
+    - name: Install OpenGFX
+      run: |
+        mkdir -p ~/Documents/OpenTTD/baseset
+        cd ~/Documents/OpenTTD/baseset
+        curl -sSfL https://cdn.openttd.org/opengfx-releases/0.6.0/opengfx-0.6.0-all.zip -o opengfx-all.zip
+        unzip -q opengfx-all.zip
+        rm -f opengfx-all.zip
+
+    - name: Install problem matcher
+      uses: ammaraskar/gcc-problem-matcher@master
+
+    - name: Import signing certificate
+      env:
+        MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+        MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+      run: |
+        keychain="$RUNNER_TEMP/signing.keychain-db"
+        keychain_password="$(openssl rand -base64 32)"
+        echo "$MACOS_CERTIFICATE_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+
+        security create-keychain -p "$keychain_password" "$keychain"
+        security set-keychain-settings -lut 21600 "$keychain"
+        security unlock-keychain -p "$keychain_password" "$keychain"
+        security import "$RUNNER_TEMP/certificate.p12" -P "$MACOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+        security set-key-partition-list -S apple-tool:,apple: -k "$keychain_password" "$keychain" > /dev/null
+        security list-keychains -d user -s "$keychain"
+        rm -f "$RUNNER_TEMP/certificate.p12"
+
+        identities=$(security find-identity -v -p codesigning "$keychain")
+        if ! grep -qF "\"$MACOS_SIGNING_IDENTITY\"" <<< "$identities"; then
+          echo "::error::The certificate does not contain the identity in MACOS_SIGNING_IDENTITY. Identities found:"
+          echo "$identities"
+          exit 1
+        fi
+
+    - name: Configure
+      env:
+        MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+      run: |
+        cmake -S . -B build \
+          -DCMAKE_OSX_ARCHITECTURES=arm64 \
+          -DVCPKG_TARGET_TRIPLET=arm64-osx \
+          -DCMAKE_TOOLCHAIN_FILE=${{ steps.vcpkg.outputs.vcpkg-cmake }} \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DOPTION_TRIM_PATH_PREFIX=ON \
+          "-DCPACK_BUNDLE_APPLE_CERT_APP=$MACOS_SIGNING_IDENTITY" \
+          "-DCPACK_BUNDLE_APPLE_CODESIGN_PARAMETER=--deep -f --options runtime --timestamp" \
+          # EOF
+
+    - name: Build
+      run: cmake --build build -j "$(sysctl -n hw.logicalcpu)" --target all openttd_test
+
+    - name: Test
+      run: |
+        cd build
+        ctest -j "$(sysctl -n hw.logicalcpu)" --timeout 120 --output-on-failure
+
+    - name: Package and sign
+      env:
+        MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+      run: |
+        cd build
+        rm -rf bundles
+        # CPack signs the app (see CPACK_BUNDLE_APPLE_* above) and puts it in a disk image.
+        cpack
+        # Remove the checksum files CPack writes; the disk image changes when the ticket is stapled.
+        rm -f bundles/*.sha256
+
+        dmg=(bundles/*.dmg)
+        codesign --sign "$MACOS_SIGNING_IDENTITY" --timestamp "${dmg[0]}"
+
+        app=(_CPack_Packages/*/Bundle/openttd-*/OpenTTD.app)
+        codesign --verify --deep --strict --verbose=2 "${app[0]}"
+        codesign --display --verbose=2 "${app[0]}" 2>&1 | grep -E "^(Identifier|Authority|Timestamp|Runtime Version|TeamIdentifier)="
+        otool -L "${app[0]}/Contents/MacOS/openttd"
+
+    - name: Notarize
+      env:
+        NOTARY_KEY_P8_BASE64: ${{ secrets.NOTARY_KEY_P8_BASE64 }}
+        NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+        NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+      run: |
+        cd build
+        key="$RUNNER_TEMP/notary_key.p8"
+        echo "$NOTARY_KEY_P8_BASE64" | base64 --decode > "$key"
+        notary_auth=(--key "$key" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID")
+
+        dmg=(bundles/*.dmg)
+        xcrun notarytool submit "${dmg[0]}" "${notary_auth[@]}" --wait --timeout 1h --output-format json > "$RUNNER_TEMP/notary.json"
+        cat "$RUNNER_TEMP/notary.json"
+        id=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["id"])' "$RUNNER_TEMP/notary.json")
+        status=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["status"])' "$RUNNER_TEMP/notary.json")
+        if [ "$status" != "Accepted" ]; then
+          echo "::error::Notarization finished with status $status"
+          xcrun notarytool log "$id" "${notary_auth[@]}"
+          rm -f "$key"
+          exit 1
+        fi
+        rm -f "$key"
+
+        xcrun stapler staple "${dmg[0]}"
+        app=(_CPack_Packages/*/Bundle/openttd-*/OpenTTD.app)
+        xcrun stapler staple "${app[0]}"
+
+        spctl --assess --type open --context context:primary-signature --verbose=2 "${dmg[0]}"
+        spctl --assess --type execute --verbose=2 "${app[0]}"
+
+    - name: Build zip
+      run: |
+        cd build
+        pushd _CPack_Packages/*/Bundle/openttd-*/
+        # Remove the Applications symlink and the disk image CPack left in the staging folder.
+        rm -f Applications ../*.dmg
+        zip_filename=(../openttd-*)
+        # Package the notarized and stapled .app.
+        zip -r -9 -y "${zip_filename[0]}.zip" OpenTTD.app
+        popd
+        mv _CPack_Packages/*/Bundle/openttd-*.zip bundles/
+
+        cd bundles
+        for f in *.dmg *.zip; do shasum -a 256 "$f" > "$f.sha256"; done
+        ls -l
+
+    - name: Remove keychain
+      if: always()
+      run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
+
+    - name: Store bundles
+      uses: actions/upload-artifact@v7
+      with:
+        name: openttd-macos-arm64
+        path: build/bundles
+        retention-days: 30
+
+  publish:
+    name: Publish release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - name: Download bundles
+      uses: actions/download-artifact@v8
+      with:
+        name: openttd-macos-arm64
+        path: bundles
+
+    - name: Create or update the release
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+        TAG: ${{ github.ref_name }}
+      run: |
+        if gh release view "$TAG" > /dev/null 2>&1; then
+          gh release upload "$TAG" bundles/* --clobber
+        else
+          prerelease=()
+          case "$TAG" in *-*) prerelease=(--prerelease) ;; esac
+          gh release create "$TAG" bundles/* --verify-tag --title "$TAG" --generate-notes "${prerelease[@]}"
+        fi

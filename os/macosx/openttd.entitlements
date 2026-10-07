@@ -2,10 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- As requested in https://partner.steamgames.com/doc/store/application/platforms, allows arbitrary plugin loads on hardened runtime -->
-	<key>com.apple.security.cs.allow-dyld-environment-variables</key>
-	<true/>
-	<key>com.apple.security.cs.disable-library-validation</key>
-	<true/>
+	<!-- No exceptions to the hardened runtime. Upstream allows DYLD environment variables and
+	     disables library validation for Steam's overlay; this fork is not released on Steam.
+	     Without them, social integration plugins not signed by the same team cannot be loaded. -->
 </dict>
 </plist>
