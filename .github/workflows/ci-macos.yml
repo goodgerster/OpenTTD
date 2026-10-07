@@ -60,6 +60,11 @@ jobs:
 
         rm -f opengfx-all.zip
 
+    - name: Install Rust toolchain
+      run: |
+        # The version pinned in rust-toolchain.toml; rustup is preinstalled on GitHub runners.
+        rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)" --profile minimal
+
     - name: Install GCC problem matcher
       uses: ammaraskar/gcc-problem-matcher@master
 

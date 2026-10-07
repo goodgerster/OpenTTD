@@ -1,0 +1,11 @@
+[package]
+name = "openttd-core"
+description = "Rust game logic for OpenTTD that does not depend on the C++ code base"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

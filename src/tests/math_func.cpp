@@ -13,7 +13,45 @@
 
 #include "../core/math_func.hpp"
 
+#include <bit>
+
 #include "../safeguards.h"
+
+/** Original C++ implementations of functions ported to Rust, used to check the ports against. */
+namespace cpp_reference {
+
+/**
+ * Original C++ implementation of IntSqrt and IntSqrt64, ported to rust/openttd-core/src/math.rs.
+ * @param num Radicand.
+ * @return Rounded integer square root.
+ */
+template <typename T>
+T IntSqrtImplementation(T num)
+{
+	if (num <= 1) return num;
+
+	/* 'bit' starts at the highest power of four <= the argument. */
+	uint8_t leading_zeroes = std::countl_zero<T>(num) | 1;
+	T bit = static_cast<T>(1) << (std::numeric_limits<T>::digits - leading_zeroes - 1);
+
+	T res = 0;
+	while (bit != 0) {
+		if (num >= res + bit) {
+			num -= res + bit;
+			res = (res >> 1) + bit;
+		} else {
+			res >>= 1;
+		}
+		bit >>= 2;
+	}
+
+	/* Arithmetic rounding to nearest integer. */
+	if (num > res) res++;
+
+	return res;
+}
+
+} // namespace cpp_reference
 
 TEST_CASE("DivideApproxTest - Negative")
 {
@@ -60,6 +98,42 @@ TEST_CASE("IntSqrt64Test - FindSqRt")
 	CHECK(1696 == IntSqrt64(2876278));
 	CHECK(0x10000 == IntSqrt64(std::numeric_limits<uint32_t>::max()));
 	CHECK(0x100000000ULL == IntSqrt64(std::numeric_limits<uint64_t>::max()));
+}
+
+TEST_CASE("IntSqrt - matches C++ reference implementation")
+{
+	uint64_t mismatches = 0;
+	auto check = [&](uint64_t num) {
+		if (IntSqrt64(num) != cpp_reference::IntSqrtImplementation<uint64_t>(num)) mismatches++;
+		uint32_t num32 = static_cast<uint32_t>(num);
+		if (IntSqrt(num32) != cpp_reference::IntSqrtImplementation<uint32_t>(num32)) mismatches++;
+	};
+
+	/* Squares and the rounding boundaries around them. */
+	for (uint64_t r = 0; r <= 0x10000; r++) {
+		check(r * r);
+		check(r * r + r);
+		check(r * r + r + 1);
+	}
+
+	/* Powers of two and their neighbours, up to the maximum values. */
+	for (uint shift = 0; shift < 64; shift++) {
+		check((1ULL << shift) - 1);
+		check(1ULL << shift);
+		check((1ULL << shift) + 1);
+	}
+	check(std::numeric_limits<uint64_t>::max());
+
+	/* A deterministic pseudo-random sample (xorshift64) of the whole range. */
+	uint64_t state = 0x9E3779B97F4A7C15ULL;
+	for (uint i = 0; i < 200000; i++) {
+		state ^= state << 13;
+		state ^= state >> 7;
+		state ^= state << 17;
+		check(state);
+	}
+
+	CHECK(mismatches == 0);
 }
 
 

@@ -8,3 +8,4 @@ docs/source/*
 /out
 /vcpkg_installed
 *.tmp
+/rust/target

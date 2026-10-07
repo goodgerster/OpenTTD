@@ -8,6 +8,12 @@ JGR's Patchpack (*jgrpp*): a heavily modified fork of OpenTTD (C++20, CMake). Th
 
 Savegames written by jgrpp are not loadable by vanilla OpenTTD; jgrpp loads vanilla savegames up to the last merged upstream version.
 
+### Direction of this fork
+- The C++ code is being converted to Rust gradually, test-first (see [Rust](#rust)). No changes are sent upstream.
+- Compatibility to keep: loading jgrpp and vanilla savegames, and the behaviour of existing AIs, game scripts and NewGRFs. Online play against unmodified jgrpp is *not* a goal, but clients of this fork must stay deterministic with each other.
+- Supported platforms: Linux, and macOS on Apple silicon. Windows, MinGW and Emscripten are unsupported; their workflow files remain but are no longer run on pull requests.
+- New features from upstream OpenTTD and from jgrpp are still taken by git merge where possible. Changes to code that has already been ported (listed in `rust/PORTED.md`) are reimplemented in Rust by hand.
+
 ## Build
 
 ```bash
@@ -24,7 +30,13 @@ cmake --build . -j$(nproc)
 ```
 
 - A GUI build fails at configure time without SDL2 or Allegro development headers ("SDL2 or Allegro is required for this platform"). In headless containers, configure with `-DOPTION_DEDICATED=ON`. A dedicated build still compiles nearly all game and GUI code; only a few `#ifdef DEDICATED` blocks and the video, sound and font drivers differ.
-- In Claude Code cloud sessions, `.claude/hooks/session-start.sh` installs the libraries a dedicated build uses and Ubuntu's `openttd-opengfx` package (linked into `~/.local/share/openttd/baseset`), then configures `build/` with `-DOPTION_DEDICATED=ON`. It does not compile anything; a full build takes about 10 minutes on 4 cores.
+- Configuring requires CMake 3.22+ (for Corrosion, which builds the Rust code) and the Rust toolchain pinned in `rust-toolchain.toml` (`rustup toolchain install 1.97.0`).
+- In Claude Code cloud sessions, `.claude/hooks/session-start.sh`:
+  - installs the libraries a dedicated build uses, plus ccache, mold, Ninja and the pinned Rust toolchain;
+  - installs Ubuntu's `openttd-opengfx` package and links it into `~/.local/share/openttd/baseset`;
+  - configures `build/` with Ninja, `-DOPTION_DEDICATED=ON`, ccache as the compiler launcher and `-fuse-ld=mold`.
+
+  It does not compile anything. Build with `cmake --build build --target all openttd_test`; Ninja picks the job count itself.
 - Other libraries (lzma, zlib, png, zstd, lzo, curl, freetype, fontconfig, harfbuzz, icu, opus) are optional; see `COMPILING.md` and the apt list in `.github/workflows/ci-linux.yml`.
 - Desync debugging: configure with `-DCMAKE_CXX_FLAGS_INIT="-DRANDOM_DEBUG"` (as the CI dedicated job does). Change `CXXFLAGS` only in a clean build directory, as they are cached.
 - If GRFCodec/NFORenum are installed, the build may regenerate `.grf` files in the source tree. CI fails if a build or test run modifies tracked files (`git diff --exit-code`), so disable `GRFCODEC_EXECUTABLE`/`NFORENUM_EXECUTABLE` in the CMake cache if that happens.
@@ -43,6 +55,7 @@ ctest -R 'FindLastBit'                         # one test, by regex over discove
 ```
 
 - Each Catch2 `TEST_CASE` is registered as a separate ctest test via `catch_discover_tests`. New test files must be added to `add_test_files(...)` in `src/tests/CMakeLists.txt`.
+- `ctest` also runs the Rust unit tests as `rust_cargo_test` (`cargo test --workspace` in `rust/`).
 - Script regression tests live in `regression/<name>/` (`main.nut`, `test.sav`, expected `result.txt`). They run the real `openttd` binary headlessly (`-x -snull -mnull -vnull:ticks=30000`) and compare script output with `result.txt`. Run them with `cmake --build . --target regression` (more verbose) or `ctest -R regression_`. They need a graphics baseset: without one the game exits with "Failed to find a graphics set" and all `regression_*` tests fail. CI first unzips OpenGFX 0.6.0 from `cdn.openttd.org` into `~/.local/share/openttd/baseset`; the Ubuntu `openttd-opengfx` package (7.x), linked into the same directory, also passes them.
 - The other check that runs on pull requests is `python3 .github/script-missing-mode-enforcement.py` (prints `OK`). It requires script API functions that issue commands or read the company to call one of the `Enforce*Mode*` macros.
 - `.github/unused-strings.py` is upstream's. Its workflow is manual-only here, and on this tree it reports about 1,950 strings as possibly unused. Nearly all of them come from `src/lang/extra/english.txt` and are in fact referenced in code, so its output is not a usable pass/fail signal.
@@ -85,7 +98,48 @@ With variable day length, "ticks" are ambiguous. `StateTicks` (`_state_ticks`) i
 ### Patchpack documentation
 Player-visible features are listed in `README.md`; release notes are in `jgrpp-changelog.md`; internal and performance changes are in `docs/jgrpp-low-level-changes.md`. `changelog.md` is upstream's. `.ottdrev-vc` is written by `version_utils.sh` during release tagging.
 
-## Code style
+## Rust
+
+### Layout
+- `rust/` is a Cargo workspace; `rust-toolchain.toml` (repository root) pins the toolchain.
+- `rust/openttd-core` holds Rust code that does not depend on C++, so it can be tested with `cargo test` alone.
+- `rust/openttd-ffi` is the only crate linked into the game. It is a static library, and every Rust static library carries its own copy of `std`, so linking two would give duplicate symbols. New crates are therefore reached through it, never linked separately.
+- CMake builds it through Corrosion (vendored in `cmake/3rdparty/corrosion`, see its `README.md`), from `rust/CMakeLists.txt`.
+
+### FFI
+- The boundary uses `cxx`: `#[cxx::bridge(namespace = "ottd_rs")]` in `rust/openttd-ffi/src/lib.rs`.
+- CMake compiles the C++ half into the `openttd_rs_bridge` target, which is linked into `openttd_lib`. C++ includes `"openttd_rs_bridge/lib.h"` and calls `ottd_rs::...`.
+- Keep the C++ wrapper functions thin, and keep the existing C++ signatures so that callers don't change. Pass plain data and IDs across the boundary, not pool pointers.
+
+### Commands
+Run from `rust/`:
+```bash
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --all
+cargo deny check licenses bans sources    # needs cargo-deny
+```
+The `Rust checks` workflow runs these on pull requests.
+
+### Rules for code that can affect game state
+- No `HashMap`/`HashSet` with the default hasher (iteration order differs per process), and no wall-clock time. `rust/clippy.toml` denies these types.
+- No floating point.
+- Use the same random number generator calls, in the same order, as the C++ code.
+- `overflow-checks` stay on in release builds, so an overflow that C++ silently wraps aborts instead. Use `wrapping_*`, `checked_*` or `saturating_*` to say what the C++ code relied on.
+- `panic = "abort"`: a panic must never unwind into C++.
+
+### Style and dependencies
+- Standard Rust style: rustfmt defaults, Rust naming and `///` doc comments. Do not carry the C++ conventions below over to Rust.
+- Dependencies must be compatible with GPL-2.0-only (`rust/deny.toml`). A crate licensed only under Apache-2.0 can't be linked into the game.
+
+### Porting procedure
+1. **Pin the current behaviour.** Before porting, make sure the existing Catch2 tests pin the behaviour, adding characterisation tests where they don't.
+2. **Write the Rust tests first, then the Rust code.** These are unit and property tests in the Rust crate.
+3. **Keep the original as a reference.** Move the original C++ implementation into the test file, inside `namespace cpp_reference`. Add a differential test that compares it with the ported function on edge cases and a deterministic sample of inputs (example: `src/tests/math_func.cpp`).
+4. **Switch over.** Reduce the C++ function to a call through the bridge, and run `ctest`.
+5. **Record it.** Add the function to `rust/PORTED.md`, so that later upstream merges are reimplemented rather than silently lost.
+
+## Code style (C++)
 
 Full rules: `CODINGSTYLE.md`. The points most often missed:
 - Indent with tabs only; no trailing whitespace; C++ sources are ASCII only.
@@ -94,5 +148,3 @@ Full rules: `CODINGSTYLE.md`. The points most often missed:
 - Single-line comments use `/* */`; trailing `//` is for end-of-line comments only.
 - Everything gets Doxygen (`/** ... */`, `///<` for members); every file starts with the GPL header block and a `/** @file name.cpp Description. */` comment.
 - `CODINGSTYLE.md` specifies upstream's commit format (`Fix #123: [Component] Details`). jgrpp's own commits use plain imperative subjects, optionally with a component prefix (`Fix crash when ...`, `Departures: Fix column spacing ...`).
-
-`CONTRIBUTING.md` is inherited from upstream OpenTTD, whose "Use of AI" policy forbids LLM-generated issues and pull requests to OpenTTD/OpenTTD.

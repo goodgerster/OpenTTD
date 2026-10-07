@@ -1,0 +1,6 @@
+# Rust toolchain for the Rust parts of OpenTTD (see rust/).
+# Pinned to an exact version so every build compiles the game logic identically.
+[toolchain]
+channel = "1.97.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

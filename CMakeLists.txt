@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.17)
 
+# The Rust cxx bridge headers are generated in rust/ and used by targets in other directories.
+if(POLICY CMP0118)
+    cmake_policy(SET CMP0118 NEW)
+endif()
+
 if(NOT BINARY_NAME)
     set(BINARY_NAME openttd)
 endif()
@@ -358,6 +363,10 @@ target_link_libraries(${OPENTTD_LIB}
     openttd::script_api
     Threads::Threads
 )
+
+# Rust parts of the game, see rust/.
+add_subdirectory(${CMAKE_SOURCE_DIR}/rust)
+target_link_libraries(${OPENTTD_LIB} openttd_rs_bridge)
 
 target_link_libraries(openttd
     openttd::media

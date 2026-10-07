@@ -18,13 +18,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
 
+# Windows, MinGW and Emscripten are not supported targets of the Rust/C++ build
+# (yet); their workflow files are kept but no longer run here.
 jobs:
-  emscripten:
-    name: Emscripten
-
-    uses: ./.github/workflows/ci-emscripten.yml
-    secrets: inherit
-
   linux:
     strategy:
       fail-fast: false
@@ -80,29 +76,11 @@ jobs:
       full_arch: ${{ matrix.full_arch }}
       extra-cmake-parameters: ${{ matrix.extra-cmake-parameters }}
 
-  windows:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-        - arch: x86
-        - arch: x64
-
-    name: Windows (${{ matrix.arch }})
-
-    uses: ./.github/workflows/ci-windows.yml
-    secrets: inherit
-
-    with:
-      arch: ${{ matrix.arch }}
-
   check_annotations:
     name: Check Annotations
     needs:
-    - emscripten
     - linux
     - macos
-    - windows
 
     if: always() && github.event_name == 'pull_request'
 

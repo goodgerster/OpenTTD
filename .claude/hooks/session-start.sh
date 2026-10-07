@@ -1,10 +1,10 @@
 #!/bin/bash
 # SessionStart hook for Claude Code cloud sessions.
 #
-# Installs the libraries used by a headless (dedicated) build, installs the
-# OpenGFX baseset needed by the regression tests, and configures build/ so a
-# session can go straight to building and testing. It does not compile
-# anything: a full build takes about 10 minutes on 4 cores.
+# Installs the libraries used by a headless (dedicated) build, the build
+# accelerators (ccache, mold, Ninja), the pinned Rust toolchain and the OpenGFX
+# baseset needed by the regression tests, then configures build/ so a session
+# can go straight to building and testing. It does not compile anything.
 #
 # Everything here is idempotent; a failed step prints a warning and the
 # session continues.
@@ -21,8 +21,9 @@ BASESET_SRC=/usr/share/games/openttd/baseset/opengfx
 BASESET_DST="$HOME/.local/share/openttd/baseset"
 
 # The optional libraries CMake looks for in a dedicated build (see CMakeLists.txt),
-# matching the CI apt list minus the GUI-only ones, plus Ubuntu's OpenGFX package.
-# cdn.openttd.org, which CI downloads OpenGFX from, may be blocked by the network policy.
+# matching the CI apt list minus the GUI-only ones; build accelerators; and
+# Ubuntu's OpenGFX package (cdn.openttd.org, which CI uses, may be blocked by the
+# network policy).
 PACKAGES=(
 	liblzma-dev
 	zlib1g-dev
@@ -30,6 +31,9 @@ PACKAGES=(
 	libzstd-dev
 	liblzo2-dev
 	libcurl4-openssl-dev
+	ccache
+	mold
+	ninja-build
 	openttd-opengfx
 )
 
@@ -59,11 +63,26 @@ else
 	status+=("WARNING: no OpenGFX baseset; regression_* tests will fail")
 fi
 
+# The Rust toolchain pinned in rust-toolchain.toml; CMake configure fails without it.
+RUST_CHANNEL="$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$PROJECT_DIR/rust-toolchain.toml")"
+if command -v rustup >/dev/null; then
+	if rustup toolchain install "$RUST_CHANNEL" --profile minimal --component rustfmt,clippy >/dev/null 2>&1 &&
+			(cd "$PROJECT_DIR/rust" && cargo fetch --locked >/dev/null 2>&1); then
+		status+=("Rust $RUST_CHANNEL installed, crates fetched")
+	else
+		status+=("WARNING: installing Rust $RUST_CHANNEL or fetching crates failed")
+	fi
+else
+	status+=("WARNING: rustup not found; install Rust $RUST_CHANNEL")
+fi
+
 # Configure only if build/ has not been configured yet, so an existing configuration is left alone.
 if [ ! -f "$BUILD_DIR/CMakeCache.txt" ]; then
 	mkdir -p "$BUILD_DIR"
-	if cmake -S "$PROJECT_DIR" -B "$BUILD_DIR" -DOPTION_DEDICATED=ON >"$BUILD_DIR/configure.log" 2>&1; then
-		status+=("build/ configured (dedicated, Debug)")
+	if cmake -S "$PROJECT_DIR" -B "$BUILD_DIR" -G Ninja -DOPTION_DEDICATED=ON \
+			-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+			-DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=mold >"$BUILD_DIR/configure.log" 2>&1; then
+		status+=("build/ configured (Ninja, dedicated, Debug, ccache, mold)")
 	else
 		status+=("WARNING: CMake configure failed, see build/configure.log")
 	fi
@@ -71,8 +90,12 @@ else
 	status+=("build/ already configured, left unchanged")
 fi
 
+if command -v ccache >/dev/null; then
+	status+=("ccache: $(ccache -sv 2>/dev/null | sed -n 's/^ *Files: *\([0-9]*\).*/\1/p' | head -1) files cached in $(ccache -k cache_dir 2>/dev/null)")
+fi
+
 echo "OpenTTD session setup:"
 printf '  - %s\n' "${status[@]}"
-echo "  Build: cmake --build build -j\$(nproc) --target all openttd_test (about 10 min from scratch)"
+echo "  Build: cmake --build build --target all openttd_test"
 echo "  Test:  ctest --test-dir build -j\$(nproc) --timeout 120"
 exit 0
