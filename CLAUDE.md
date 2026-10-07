@@ -23,7 +23,8 @@ cmake .. [-G Ninja] [-DCMAKE_BUILD_TYPE=RelWithDebInfo] [-DOPTION_DEDICATED=ON]
 cmake --build . -j$(nproc)
 ```
 
-- A GUI build fails at configure time without SDL2 or Allegro development headers ("SDL2 or Allegro is required for this platform"). In headless containers, configure with `-DOPTION_DEDICATED=ON`.
+- A GUI build fails at configure time without SDL2 or Allegro development headers ("SDL2 or Allegro is required for this platform"). In headless containers, configure with `-DOPTION_DEDICATED=ON`. A dedicated build still compiles nearly all game and GUI code; only a few `#ifdef DEDICATED` blocks and the video, sound and font drivers differ.
+- In Claude Code cloud sessions, `.claude/hooks/session-start.sh` installs the libraries a dedicated build uses and Ubuntu's `openttd-opengfx` package (linked into `~/.local/share/openttd/baseset`), then configures `build/` with `-DOPTION_DEDICATED=ON`. It does not compile anything; a full build takes about 10 minutes on 4 cores.
 - Other libraries (lzma, zlib, png, zstd, lzo, curl, freetype, fontconfig, harfbuzz, icu, opus) are optional; see `COMPILING.md` and the apt list in `.github/workflows/ci-linux.yml`.
 - Desync debugging: configure with `-DCMAKE_CXX_FLAGS_INIT="-DRANDOM_DEBUG"` (as the CI dedicated job does). Change `CXXFLAGS` only in a clean build directory, as they are cached.
 - If GRFCodec/NFORenum are installed, the build may regenerate `.grf` files in the source tree. CI fails if a build or test run modifies tracked files (`git diff --exit-code`), so disable `GRFCODEC_EXECUTABLE`/`NFORENUM_EXECUTABLE` in the CMake cache if that happens.
@@ -42,7 +43,7 @@ ctest -R 'FindLastBit'                         # one test, by regex over discove
 ```
 
 - Each Catch2 `TEST_CASE` is registered as a separate ctest test via `catch_discover_tests`. New test files must be added to `add_test_files(...)` in `src/tests/CMakeLists.txt`.
-- Script regression tests live in `regression/<name>/` (`main.nut`, `test.sav`, expected `result.txt`). They run the real `openttd` binary headlessly (`-x -snull -mnull -vnull:ticks=30000`) and compare script output with `result.txt`. Run them with `cmake --build . --target regression` (more verbose) or `ctest -R regression_`. They need a graphics baseset: without one the game exits with "Failed to find a graphics set" and all `regression_*` tests fail. CI first unzips OpenGFX (`https://cdn.openttd.org/opengfx-releases/0.6.0/opengfx-0.6.0-all.zip`) into `~/.local/share/openttd/baseset`.
+- Script regression tests live in `regression/<name>/` (`main.nut`, `test.sav`, expected `result.txt`). They run the real `openttd` binary headlessly (`-x -snull -mnull -vnull:ticks=30000`) and compare script output with `result.txt`. Run them with `cmake --build . --target regression` (more verbose) or `ctest -R regression_`. They need a graphics baseset: without one the game exits with "Failed to find a graphics set" and all `regression_*` tests fail. CI first unzips OpenGFX 0.6.0 from `cdn.openttd.org` into `~/.local/share/openttd/baseset`; the Ubuntu `openttd-opengfx` package (7.x), linked into the same directory, also passes them.
 - The other check that runs on pull requests is `python3 .github/script-missing-mode-enforcement.py` (prints `OK`). It requires script API functions that issue commands or read the company to call one of the `Enforce*Mode*` macros.
 - `.github/unused-strings.py` is upstream's. Its workflow is manual-only here, and on this tree it reports about 1,950 strings as possibly unused. Nearly all of them come from `src/lang/extra/english.txt` and are in fact referenced in code, so its output is not a usable pass/fail signal.
 
