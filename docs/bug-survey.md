@@ -6,12 +6,40 @@ upstream OpenTTD `master` at `0000a2acb` (2026-10-07).
 The aim is a list of bugs to fix or to avoid reproducing while porting to Rust.
 Each entry says how it was found and how sure the finding is.
 
+## Summary
+
+Actionable, most important first:
+
+1. **Crash in Debug builds when a crashed train whose last wagon is in a
+   depot is cleared away** (`src/train_cmd.cpp:6521`). Present in latest
+   jgrpp; upstream fixed its own variant in `1ea8a4cab`. One-line fix.
+2. **Stale vehicle caches while loading** (upstream `e60411035`): affects
+   station ratings through `cached_max_speed`. Deterministic, so no desync.
+3. **Vehicle reliability can stay above its model's reliability** (upstream
+   `ecbe2aa17`): affects breakdown chances.
+4. **Dual-headed engines' purchase capacity ignores the capacity callback for
+   the rear head** (upstream `5ac4eb48c`): wrong in the purchase list and in
+   `ScriptEngine::GetCapacity`.
+5. Four GUI problems with fonts and widget sizes, one with the map generator
+   window, and misfiled debug messages (upstream fixes listed below).
+6. **Latent:** real-time timers iterate over a container that their callbacks
+   must not change; game-tick timers iterate over a copy that can hold
+   dangling pointers if a callback deletes another timer.
+
+When merging upstream: `91e5f72f4` (hotkey modifiers) probably breaks jgrpp's
+polyline rail hotkeys, `5fcaa0982` (timers) does not fit jgrpp's timer
+container, and `58f8467ec` and `de306de89` must come with the upstream commits
+that caused their bugs.
+
+The sanitizers found no memory errors; the undefined behaviour they found is
+harmless with the current compiler flags but should not be carried into Rust.
+
 ## Sources and what they cover
 
 | Source | Covered | Not covered |
 | --- | --- | --- |
 | Issue trackers of jgrpp and upstream | Nothing (see below) | All open issues |
-| Upstream fixes not yet merged into jgrpp | All 28 `Fix` commits on upstream `master` that are not in jgrpp | Fixes still in open upstream pull requests |
+| Upstream fixes not yet merged into jgrpp | All 32 `Fix` commits on upstream `master` that are not in jgrpp | Fixes still in open upstream pull requests |
 | AddressSanitizer + UndefinedBehaviorSanitizer | Unit tests, script regression tests, five new games of one game year each, about 7 game years of the title game | Multiplayer, GUI interaction, NewGRFs, third-party AIs, large maps |
 | `known-bugs.md` | Upstream's list of bugs it will not fix | |
 | Code markers (`FIXME`, `XXX`, `TODO`, `HACK`) | All of `src/` except `3rdparty/` | |
@@ -39,20 +67,20 @@ deterministic behaviour), **script** (values seen by AIs and game scripts),
 
 ### Upstream fixes not yet merged into jgrpp
 
-Upstream `master` has 171 commits that jgrpp has not merged, 28 of them with
-subjects starting with `Fix`. JGR cherry-picks many fixes ahead of a full
-merge, so each was checked against this tree: first by applying the upstream
-patch forwards and in reverse, then by reading the code where neither applies.
+Upstream `master` has 187 commits (from 2026-07-26 on) that jgrpp has not
+merged, 32 of them with subjects starting with `Fix`. JGR cherry-picks many
+fixes ahead of a full merge, so each was checked against this tree: first by
+applying the upstream patch forwards and in reverse, then by reading the code
+where neither applies.
 
 | Upstream commit | Subject | Status here | Severity |
 | --- | --- | --- | --- |
 | `5ac4eb48c` | Fix #11127: use callback for dual-headed engine purchase capacity | **Present.** `Engine::DetermineCapacity` (`src/engine.cpp:287`) adds the rear head's plain property instead of doubling the callback result. Shown in the purchase list and returned by `ScriptEngine::GetCapacity`. | script, GUI |
 | `f58eac1d3` | Fix #15824: Game crash when truncating cargo of crashed vehicle | Not affected. The upstream crash is an underflow of the `Keep` count in `CargoRemoval<VehicleCargoList>`. jgrpp's `VehicleCargoList::Truncate` (`src/cargopacket.cpp:877`) calls `KeepAll()` first whenever more than the `Keep` count is removed, and `Truncate` is the only user of that action. | |
 | `83d286383`, `122287992`, `3a33cd64c`, `ce14e19d8`, `8d9b24cc1` | Cargo truncation on capacity reduction; `BreakIterator::setText` temporary; autoclean; company colour order; bootstrap button size | Already fixed here (the upstream patches apply in reverse). | |
-| `9060a4a7e`, `97951cfcf`, `252c239a1`, `4ecbb871d`, `d6848be64` | Earlier fixes from the August check | Already fixed here, with jgrpp's own code. | |
+| `9060a4a7e`, `97951cfcf`, `252c239a1`, `4ecbb871d`, `d6848be64` | Dual-headed capacity when sorting; rivers and small seas; script string saving; house protection; NewGRF label byte order | Already fixed here (cherry-picked by JGR). | |
 | `987fab4bd` | MinGW link fix for libsoxr | Not applicable (no libsoxr, no MinGW). | |
 | `7b3743db1` | Grammar in the script API documentation | Not checked (documentation only). | |
-
 | `14f7a28e8` | Fix f864aaf13: Fallback font choice should have all glyphs not only missing glyphs | **Present.** The fallback search tests only the missing glyphs (`src/os/unix/font_unix.cpp:199-206`, `src/os/macosx/font_osx.cpp:304, 316`), so a fallback can replace the configured font while lacking glyphs the configured font had. | GUI |
 | `6a35a9718` | Fix: Pass full isocode when searching for font with fontconfig | **Present.** `src/os/unix/font_unix.cpp:160` cuts the isocode at `_`. | GUI |
 | `117d5d695` | Fix: Widget sizes may be incorrect after font change due to language change | **Present.** `src/settings_gui.cpp:1575` re-initialises windows without recomputing font-dependent widget sizes. | GUI |
@@ -60,7 +88,12 @@ patch forwards and in reverse, then by reading the code where neither applies.
 | `a7755dbf7` | Fix: Wrong category for some base set debug messages | **Present** (`src/base_media_func.h:251`, `src/music.cpp:142, 148, 180`). | diagnostics |
 | `4b5f010b4`, `2237b6b97` | Double-clicking a depot or waypoint order; glyphs for whitespace | Already fixed here, with jgrpp's own code. | |
 | `5fcaa0982` | Fix #16053: Crash due to undefined behaviour when leaving screensaver mode | Not affected: jgrpp's game-tick timers are run from a copied vector (`src/timer/timer_game_tick.cpp:51`). Do not port the upstream change as written; see the note below. | |
-| `58f8467ec`, `ee77792ed`, `ecbe2aa17`, `283849956`, `79e679604`, `1ea8a4cab`, `8cc483274`, `de306de89`, `141b4e5ee`, `e60411035` | Terraforming desync, reliability, elrail compatibility, crashed trains, station area, trees on coast, vehicle caches | Being checked. | |
+| `1ea8a4cab` | Fix #15990, c9cf1418139: Game crash when clearing up crashed train with last wagon in depot | **Present in jgrpp's own form.** Upstream's cause is not here, but `GetTrackbitsFromCrashedVehicle` returns `TRACK_BIT_NONE` for a wagon in a depot (`src/train_cmd.cpp:6441`), and `DeleteLastWagon` then calls `TrackBitsToTrack(TRACK_BIT_NONE)` (`src/train_cmd.cpp:6521`). That fails a `dbg_assert` (`src/track_func.h:195`), which is active in Debug builds, the default here. Release builds are unaffected (the result is not used). Latest jgrpp has the same code. Fix: compute the track only when `trackbits != TRACK_BIT_NONE`. | crash (Debug builds) |
+| `ecbe2aa17` | Fix: Limit vehicle reliability to the model's current maximum reliability | **Present.** `src/vehicle.cpp:2304` clamps the decreased reliability at 0 but not at the engine's current reliability. jgrpp's `reliability_decay_speed` setting and the cases without decay make it likelier that a vehicle stays above its model. | game |
+| `e60411035` | Fix: invalidate/update vehicle caches when vehicle is marked dirty | **Present.** `Train::MarkDirty` (`src/train_cmd.cpp:4981`) only calls `CargoChanged()`; the road vehicle and aircraft versions refresh no caches. `cached_max_speed` can therefore be stale while loading, and `src/economy.cpp:2202-2217` uses it for the station rating. Not a desync: jgrpp's VENC chunk sends the server's cached values to joining clients. A port would use jgrpp's `ConsistChanged(CCF_LOADUNLOAD)`. | game |
+| `ee77792ed` | Fix: Terrain average height setting only applies to TerraGenesis | **Present.** `src/genworld_gui.cpp:607-609` leaves the average height dropdown enabled for the original generator, which ignores it (`src/tgp.cpp:548` is the only reader). | GUI |
+| `283849956`, `79e679604`, `8cc483274`, `141b4e5ee` | Electric rail compatibility when disabled; signed `-1` in script returns; reservation under crashed trains; trees on coast rocks | Already fixed here (cherry-picked by JGR). | |
+| `58f8467ec`, `de306de89` | Fix #16018 (desync when terraforming), Fix #15985 (station area after adding to a station) | Not applicable yet: the bugs come from upstream `2692444f4` and `dc39225d6`, which jgrpp has not merged. Take the fixes together with those commits, or the merge brings the bugs in. | (desync, game) |
 
 Notes on these fixes:
 
@@ -156,3 +189,7 @@ git fetch https://github.com/OpenTTD/OpenTTD master:refs/remotes/upstream/master
 git fetch https://github.com/JGRennison/OpenTTD-patches jgrpp:refs/remotes/jgr/jgrpp
 git log --format='%h %cs %s' refs/remotes/jgr/jgrpp..refs/remotes/upstream/master | grep ' Fix'
 ```
+
+In a shallow clone, fetch both with the clone's own `--shallow-since` date
+or earlier. A later boundary applies to every ref and hides older unmerged
+commits from the range.
