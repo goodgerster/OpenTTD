@@ -24,7 +24,7 @@ cmake -S . -B build -G Ninja -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMP
 cmake --build build --target all openttd_test   # Ninja picks the job count itself
 ```
 
-The default build type is Debug with asserts, which runs far slower than a release build. `./build.sh` and `./build-dedicated.sh` (upstream's) still work inside the dev shell but use Make and the default linker.
+Without `CMAKE_BUILD_TYPE` (as configured above and by the session hook), `cmake/CompileFlags.cmake` compiles with `-O2 -DNDEBUG`, and `assert` stays active through `OPTION_USE_ASSERTS` (`WITH_ASSERT`). The more expensive `dbg_assert` checks are compiled only with `-DCMAKE_BUILD_TYPE=Debug` or `-DOPTION_DBG_ASSERTS=ON`; CI's "macOS - Debug" job is the only one that has them. `./build.sh` and `./build-dedicated.sh` (upstream's) still work inside the dev shell but use Make and the default linker.
 
 - `.claude/hooks/session-start.sh` runs at session start, in cloud sessions and locally on macOS:
   - **Cloud only:** installs Nix if it is missing.
