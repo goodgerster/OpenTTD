@@ -10,9 +10,9 @@ Each entry says how it was found and how sure the finding is.
 
 Actionable, most important first:
 
-1. **Desync from a console command** (upstream #12059): `setting_newgame`
-   runs a setting's change callback against the live game; for
-   `freeform_edges` that rewrites the map border on one client only.
+1. **Fixed in this fork: desync from a console command** (upstream #12059):
+   `setting_newgame` ran some settings' change callbacks against the running
+   game, on the client that used it only.
 2. **Cargo income arithmetic** (`src/economy.cpp`): a negative profit
    callback result becomes a huge positive income, and large deliveries over
    long distances wrap a 32-bit product. Deterministic, but wrong; a Rust
@@ -154,7 +154,7 @@ counted above but not listed.
 
 | Issue | Problem | Status here |
 | --- | --- | --- |
-| upstream #12059 | The console command `setting_newgame` runs the setting's change callback as if the live game's setting had changed. For `construction.freeform_edges` that rewrites the map border, so a client that runs it desyncs, and in single player the border becomes sea while the game's setting is unchanged. jgrpp adds more callbacks of this kind. | **Present** (re-checked): `IntSettingDesc::ChangeValue` (`src/settings.cpp:1796`) via `src/settings.cpp:2004`; `UpdateFreeformEdges` (`src/settings_table.cpp:1051`). |
+| upstream #12059 | The console command `setting_newgame` ran the setting's post-change callback during a game. jgrpp already applies such changes in a temporary main-menu mode, so callbacks that check the game mode (such as the one for `freeform_edges`) were safe, but about a dozen others changed the running game: for example the engine lifetime settings re-ran `StartupEngines()`, `train_speed_adaptation` cleared all signal speed restrictions, the braking model reset brake heat, `disable_elrails` changed rail compatibility, and the aircraft range and breakdown settings reset vehicle flags. A client running the command desynced. | **Fixed in this fork**: callbacks and the game log now react only to changes of the settings in use (`IsChangeOfSettingsInUse` in `src/settings.cpp`); unit tests in `src/tests/settings_newgame.cpp`. |
 | upstream #9079 | NewGRFs reading lazily filled vehicle caches can desync. | Unclear. Same cache design (`src/newgrf_engine.cpp:560-762`); jgrpp's cache check (`src/cachecheck.cpp:419-447`) would detect mismatches. |
 | upstream #15552 | Repeated desyncs on one server. | Unclear; little information. |
 
