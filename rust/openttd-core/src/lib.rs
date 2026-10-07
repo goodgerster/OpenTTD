@@ -3,4 +3,5 @@
 //! Everything here can be tested with `cargo test` alone. Code that can affect
 //! the game state must be deterministic: see the Rust section of `CLAUDE.md`.
 
+pub mod bmp;
 pub mod math;

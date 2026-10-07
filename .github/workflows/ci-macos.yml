@@ -23,7 +23,7 @@ jobs:
 
     runs-on: macos-latest
     env:
-      MACOSX_DEPLOYMENT_TARGET: 11.0
+      MACOSX_DEPLOYMENT_TARGET: 10.15
 
     steps:
     - name: Setup Xcode version
@@ -59,11 +59,6 @@ jobs:
         echo "::endgroup::"
 
         rm -f opengfx-all.zip
-
-    - name: Install Rust toolchain
-      run: |
-        # The version pinned in rust-toolchain.toml; rustup is preinstalled on GitHub runners.
-        rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)" --profile minimal
 
     - name: Install GCC problem matcher
       uses: ammaraskar/gcc-problem-matcher@master
