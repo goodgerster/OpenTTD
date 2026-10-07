@@ -12,43 +12,34 @@ Savegames written by jgrpp are not loadable by vanilla OpenTTD; jgrpp loads vani
 - The C++ code is being converted to Rust gradually, test-first (see [Rust](#rust)). No changes are sent upstream.
 - Compatibility to keep: loading jgrpp and vanilla savegames, and the behaviour of existing AIs, game scripts and NewGRFs. Online play against unmodified jgrpp is *not* a goal, but clients of this fork must stay deterministic with each other.
 - Supported platforms: Linux, and macOS on Apple silicon. Windows, MinGW and Emscripten are unsupported; their workflow files remain but are no longer run on pull requests.
-- New features from upstream OpenTTD and from jgrpp are still taken by git merge where possible. Changes to code that has already been ported (listed in `rust/PORTED.md`) are reimplemented in Rust by hand.
+- New features from upstream OpenTTD and from jgrpp are still taken by git merge where possible. Changes to code that has already been ported (listed in `rust/PORTED.md`) are reimplemented in Rust by hand. Switching from full merges to selective backports is acceptable whenever that makes porting cheaper.
 
 ## Build
 
-```bash
-./build.sh                # mkdir build, delete CMakeCache.txt, cmake .., make -j$(nproc)
-./build-dedicated.sh      # same, with -DOPTION_DEDICATED=true (no GUI)
-```
-
-Manual equivalent (the default build type is Debug with asserts, which runs far slower than a release build):
+The toolchain comes from the Nix flake (`flake.nix`, pinned by `flake.lock`): clang 22 and lld (the same LLVM major version as the pinned rustc), CMake, Ninja, ccache, the Rust toolchain from `rust-toolchain.toml`, cargo-deny and the libraries, for `aarch64-darwin` and `x86_64-linux`. Enter it with `nix develop`, or `source build/nix-dev-env.sh` once the session hook has written it.
 
 ```bash
-mkdir build && cd build
-cmake .. [-G Ninja] [-DCMAKE_BUILD_TYPE=RelWithDebInfo] [-DOPTION_DEDICATED=ON]
-cmake --build . -j$(nproc)
+cmake -S . -B build -G Ninja -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+    -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld [-DCMAKE_BUILD_TYPE=RelWithDebInfo] [-DOPTION_DEDICATED=ON]
+cmake --build build --target all openttd_test   # Ninja picks the job count itself
 ```
 
-- A GUI build fails at configure time without SDL2 or Allegro development headers ("SDL2 or Allegro is required for this platform"). In headless containers, configure with `-DOPTION_DEDICATED=ON`. A dedicated build still compiles nearly all game and GUI code; only a few `#ifdef DEDICATED` blocks and the video, sound and font drivers differ.
-- Configuring requires CMake 3.22+ (for Corrosion, which builds the Rust code) and the Rust toolchain pinned in `rust-toolchain.toml`: either rustup (`rustup toolchain install 1.97.0`) or the Nix dev shell. CMake uses the first `rustc` in `PATH`.
-- `flake.nix` defines a dev shell (`nix develop`) with the whole toolchain: CMake, Ninja, ccache, the pinned Rust, cargo-deny and the libraries. It covers `aarch64-darwin` and `x86_64-linux`.
-- `.claude/hooks/session-start.sh` runs at session start and dispatches by environment.
-  - **Cloud sessions** (`session-start-cloud.sh`):
-    - Installs, via apt, the libraries a dedicated build uses, plus ccache, mold, Ninja and the pinned Rust toolchain.
-    - Installs Ubuntu's `openttd-opengfx` package and links it into `~/.local/share/openttd/baseset`.
-    - Configures `build/` with Ninja, `-DOPTION_DEDICATED=ON`, ccache and `-fuse-ld=mold`.
-    - For a new session, then builds `build/` in the background. **Wait until `build/warm-build.done` exists** (it holds the exit status) before building or testing in `build/`, and never run two builds in `build/` at once.
-  - **Local sessions on macOS** (`session-start-macos.sh`):
-    - Loads the Nix dev shell into Claude's Bash commands, via `build/nix-dev-env.sh` sourced from `CLAUDE_ENV_FILE`. In your own terminal, use `nix develop` or `source build/nix-dev-env.sh`.
-    - Downloads OpenGFX into `~/Documents/OpenTTD/baseset`.
-    - Configures a GUI `build/` with Ninja and ccache.
-- Build with `cmake --build build --target all openttd_test`; Ninja picks the job count itself.
+The default build type is Debug with asserts, which runs far slower than a release build. `./build.sh` and `./build-dedicated.sh` (upstream's) still work inside the dev shell but use Make and the default linker.
+
+- `.claude/hooks/session-start.sh` runs at session start, in cloud sessions and locally on macOS:
+  - **Cloud only:** installs Nix if it is missing.
+  - Loads the dev shell into Claude's Bash commands: it writes `build/nix-dev-env.sh` and sources it via `CLAUDE_ENV_FILE`.
+  - Installs OpenGFX into the baseset directory: `~/.local/share/openttd/baseset` on Linux, `~/Documents/OpenTTD/baseset` on macOS.
+  - Configures `build/` as above, as a GUI build, unless it is already configured. It warns if `build/` was configured with a different compiler; delete `build/` to reconfigure.
+  - **Cloud, new session only:** builds `build/` in the background. **Wait until `build/warm-build.done` exists** (it holds the exit status) before building or testing in `build/`, and never run two builds in `build/` at once.
+- A GUI build on Linux needs SDL2 (in the dev shell). Configure with `-DOPTION_DEDICATED=ON` for a headless server; it still compiles nearly all game and GUI code, and only a few `#ifdef DEDICATED` blocks and the video, sound and font drivers differ.
+- CMake 3.22+ is required (for Corrosion, which builds the Rust code). CMake uses the first `rustc` in `PATH`; with rustup instead of Nix, the toolchain pinned in `rust-toolchain.toml` is selected.
 - Build times measured on 4 cores:
-  - cold full build: about 10 minutes;
-  - full rebuild of `build/` at the same path with a warm ccache: about 40 s;
-  - one changed `.cpp`, compiled and relinked with mold: about 2 s.
+  - cold full build: 10 to 15 minutes;
+  - full rebuild of `build/` at the same path with a warm ccache: under a minute;
+  - one changed `.cpp`, compiled and relinked: about 2 s.
 - ccache only hits for the same build directory path. Its keys include the build directory (`hash_dir`) and absolute paths, so a build in a differently named directory recompiles everything. Reuse `build/` rather than creating new build directories.
-- Other libraries (lzma, zlib, png, zstd, lzo, curl, freetype, fontconfig, harfbuzz, icu, opus) are optional; see `COMPILING.md` and the apt list in `.github/workflows/ci-linux.yml`.
+- The game's libraries (lzma, zlib, png, zstd, lzo, curl, freetype, fontconfig, harfbuzz, icu, opus) are optional to CMake; the dev shell provides them. See `COMPILING.md`.
 - Desync debugging: configure with `-DCMAKE_CXX_FLAGS_INIT="-DRANDOM_DEBUG"` (as the CI dedicated job does). Change `CXXFLAGS` only in a clean build directory, as they are cached.
 - If GRFCodec/NFORenum are installed, the build may regenerate `.grf` files in the source tree. CI fails if a build or test run modifies tracked files (`git diff --exit-code`), so disable `GRFCODEC_EXECUTABLE`/`NFORENUM_EXECUTABLE` in the CMake cache if that happens.
 - `make_bundle.sh` runs `cpack` in `build/`.
@@ -67,6 +58,7 @@ ctest -R 'FindLastBit'                         # one test, by regex over discove
 
 - Each Catch2 `TEST_CASE` is registered as a separate ctest test via `catch_discover_tests`. New test files must be added to `add_test_files(...)` in `src/tests/CMakeLists.txt`.
 - `ctest` also runs the Rust unit tests as `rust_cargo_test` (`cargo test --workspace` in `rust/`).
+- CI (`.github/workflows/ci-build.yml` → `ci-nix.yml`) configures, builds and runs `ctest` inside `nix develop`: Linux GUI, Linux dedicated with `RANDOM_DEBUG`, and macOS Debug and Release. `rust-checks.yml` runs the Rust commands below. Upstream's `ci-linux.yml`, `ci-macos.yml` and the Windows, MinGW and Emscripten workflows are kept unchanged but unused, to keep merges simple.
 - Script regression tests live in `regression/<name>/` (`main.nut`, `test.sav`, expected `result.txt`). They run the real `openttd` binary headlessly (`-x -snull -mnull -vnull:ticks=30000`) and compare script output with `result.txt`. Run them with `cmake --build . --target regression` (more verbose) or `ctest -R regression_`. They need a graphics baseset: without one the game exits with "Failed to find a graphics set" and all `regression_*` tests fail. CI first unzips OpenGFX 0.6.0 from `cdn.openttd.org` into `~/.local/share/openttd/baseset`; the Ubuntu `openttd-opengfx` package (7.x), linked into the same directory, also passes them.
 - The other check that runs on pull requests is `python3 .github/script-missing-mode-enforcement.py` (prints `OK`). It requires script API functions that issue commands or read the company to call one of the `Enforce*Mode*` macros.
 - `.github/unused-strings.py` is upstream's. Its workflow is manual-only here, and on this tree it reports about 1,950 strings as possibly unused. Nearly all of them come from `src/lang/extra/english.txt` and are in fact referenced in code, so its output is not a usable pass/fail signal.
@@ -121,6 +113,7 @@ Player-visible features are listed in `README.md`; release notes are in `jgrpp-c
 - The boundary uses `cxx`: `#[cxx::bridge(namespace = "ottd_rs")]` in `rust/openttd-ffi/src/lib.rs`.
 - CMake compiles the C++ half into the `openttd_rs_bridge` target, which is linked into `openttd_lib`. C++ includes `"openttd_rs_bridge/lib.h"` and calls `ottd_rs::...`.
 - Keep the C++ wrapper functions thin, and keep the existing C++ signatures so that callers don't change. Pass plain data and IDs across the boundary, not pool pointers.
+- Keep calls coarse: each call across the boundary costs a function call that cannot be inlined (there is no cross-language LTO yet). For bulk data, pass slices: e.g. `src/bmp.cpp` reads the file into memory and Rust decodes directly into the C++ buffer. Avoid porting generic C++ templates in hot loops on their own (e.g. `misc/binaryheap.hpp`, YAPF's open list): port them together with their callers.
 
 ### Commands
 Run from `rust/`:

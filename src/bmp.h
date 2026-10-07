@@ -31,4 +31,7 @@ struct BmpData {
 bool BmpReadHeader(RandomAccessFile &file, BmpInfo &info, BmpData &data);
 bool BmpReadBitmap(RandomAccessFile &file, BmpInfo &info, BmpData &data);
 
+bool BmpReadHeader(std::span<const uint8_t> file, BmpInfo &info, BmpData &data);
+bool BmpReadBitmap(std::span<const uint8_t> file, const BmpInfo &info, BmpData &data);
+
 #endif /* BMP_H */
