@@ -7,7 +7,8 @@
 # - Loads the dev shell into the environment of Claude's Bash commands:
 #   build/nix-dev-env.sh, sourced through CLAUDE_ENV_FILE.
 # - Installs the OpenGFX baseset needed by the regression tests.
-# - Configures build/ (Ninja, Debug, ccache, lld) unless it is configured.
+# - macOS: makes Apple's git work with the dev shell's environment.
+# - Configures build/ (Ninja, ccache, lld) unless it is configured.
 # - Cloud sessions, new session only: builds build/ in the background, which
 #   also fills ccache; build/warm-build.done appears when it has finished.
 #
@@ -81,6 +82,15 @@ if nix print-dev-env ${NIX_ARGS[@]+"${NIX_ARGS[@]}"} --json --profile "$BUILD_DI
 		nix eval ${NIX_ARGS[@]+"${NIX_ARGS[@]}"} --raw --impure \
 			--expr "import $HOOK_DIR/dev-env-exports.nix \"$BUILD_DIR/nix-dev-env.json\"" \
 			>"$ENV_SCRIPT" 2>>"$BUILD_DIR/nix-dev-env.log"; then
+	# macOS: the dev shell sets DEVELOPER_DIR to the SDK from Nix, where Apple's git (an xcrun
+	# shim) finds no git. Put a wrapper in front of it that runs it without that SDK.
+	if [ "$PLATFORM" = macos ] && [ "$(command -v git)" = /usr/bin/git ]; then
+		mkdir -p "$BUILD_DIR/nix-dev-bin"
+		printf '%s\n' '#!/bin/sh' 'exec env -u DEVELOPER_DIR -u SDKROOT /usr/bin/git "$@"' \
+			>"$BUILD_DIR/nix-dev-bin/git"
+		chmod +x "$BUILD_DIR/nix-dev-bin/git"
+		echo "export PATH='$BUILD_DIR/nix-dev-bin':\"\$PATH\"" >>"$ENV_SCRIPT"
+	fi
 	if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
 		echo "source '$ENV_SCRIPT'" >>"$CLAUDE_ENV_FILE"
 		status+=("Nix dev shell loaded for Bash commands (build/nix-dev-env.sh)")
@@ -119,7 +129,7 @@ if [ ! -f "$BUILD_DIR/CMakeCache.txt" ]; then
 			-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
 			-DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld) >"$BUILD_DIR/configure.log" 2>&1; then
 		configured=true
-		status+=("build/ configured (Ninja, Debug, ccache, lld)")
+		status+=("build/ configured (Ninja, ccache, lld)")
 	else
 		# Remove the partial cache, so that the next session configures again.
 		rm -f "$BUILD_DIR/CMakeCache.txt"

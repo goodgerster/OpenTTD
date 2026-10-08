@@ -29,6 +29,7 @@ Without `CMAKE_BUILD_TYPE` (as configured above and by the session hook), `cmake
 - `.claude/hooks/session-start.sh` runs at session start, in cloud sessions and locally on macOS:
   - **Cloud only:** installs Nix if it is missing.
   - Loads the dev shell into Claude's Bash commands: it writes `build/nix-dev-env.sh` and sources it via `CLAUDE_ENV_FILE`.
+  - **macOS only:** puts a wrapper for Apple's `git` (`build/nix-dev-bin/git`) first in `PATH`. The dev shell sets `DEVELOPER_DIR` to the SDK from Nix, under which `/usr/bin/git` fails with "tool 'git' not found".
   - Installs OpenGFX into the baseset directory: `~/.local/share/openttd/baseset` on Linux, `~/Documents/OpenTTD/baseset` on macOS.
   - Configures `build/` as above, as a GUI build, unless it is already configured. It warns if `build/` was configured with a different compiler; delete `build/` to reconfigure.
   - **Cloud, new session only:** builds `build/` in the background. **Wait until `build/warm-build.done` exists** (it holds the exit status) before building or testing in `build/`, and never run two builds in `build/` at once.

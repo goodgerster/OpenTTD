@@ -34,6 +34,17 @@
             if pkgs.stdenv.hostPlatform.isLinux
             then pkgs.overrideCC llvm.stdenv (llvm.clang.override { bintools = llvm.bintools; })
             else llvm.stdenv;
+          # The Rust toolchain pinned in rust-toolchain.toml. rust-overlay makes it propagate
+          # nixpkgs' default C compiler, as the linker for Rust, which comes before the dev
+          # shell's own compiler in PATH. On macOS that is an older clang, which CMake and
+          # Cargo would then use instead of this one; without it, Rust links through `cc`
+          # from the dev shell. (On Linux it is gcc, which does not shadow `clang`.)
+          rustToolchain =
+            let toolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+            in
+            if pkgs.stdenv.hostPlatform.isDarwin
+            then toolchain.overrideAttrs (_: { depsHostHostPropagated = [ ]; propagatedBuildInputs = [ ]; })
+            else toolchain;
         in
         {
           default = (pkgs.mkShell.override { inherit stdenv; }) {
@@ -46,8 +57,8 @@
               llvm.lld
               python3
 
-              # The Rust toolchain pinned in rust-toolchain.toml, and the dependency policy checker
-              (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
+              # The Rust toolchain, and the dependency policy checker
+              rustToolchain
               cargo-deny
 
               # Optional libraries the game uses (see COMPILING.md)

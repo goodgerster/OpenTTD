@@ -28,6 +28,12 @@ corrosion_import_crate(
     LOCKED
 )
 
+# On macOS, Corrosion makes everything that links the Rust library search the SDK of
+# Apple's Command Line Tools for libraries. Those would take precedence over the system
+# libraries of the SDK the build uses (CMAKE_OSX_SYSROOT), and lld cannot read the ones
+# in the macOS 27 SDK.
+set_property(TARGET openttd_ffi-static PROPERTY INTERFACE_LINK_DIRECTORIES "")
+
 # C++ side of the cxx bridge. C++ code includes "openttd_rs_bridge/lib.h".
 corrosion_add_cxxbridge(openttd_rs_bridge CRATE openttd_ffi FILES lib.rs)
 
