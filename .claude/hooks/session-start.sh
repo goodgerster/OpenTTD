@@ -92,7 +92,9 @@ if nix print-dev-env ${NIX_ARGS[@]+"${NIX_ARGS[@]}"} --json --profile "$BUILD_DI
 		echo "export PATH='$BUILD_DIR/nix-dev-bin':\"\$PATH\"" >>"$ENV_SCRIPT"
 	fi
 	if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
-		echo "source '$ENV_SCRIPT'" >>"$CLAUDE_ENV_FILE"
+		# A resumed session runs this hook again with the same file.
+		grep -qxF "source '$ENV_SCRIPT'" "$CLAUDE_ENV_FILE" 2>/dev/null ||
+			echo "source '$ENV_SCRIPT'" >>"$CLAUDE_ENV_FILE"
 		status+=("Nix dev shell loaded for Bash commands (build/nix-dev-env.sh)")
 	else
 		status+=("Nix dev shell ready, but CLAUDE_ENV_FILE is not set: prefix commands with 'source build/nix-dev-env.sh &&'")
