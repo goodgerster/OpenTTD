@@ -1,0 +1,32 @@
+[workspace]
+resolver = "3"
+members = ["openttd-core", "openttd-ffi"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "GPL-2.0-only"
+publish = false
+
+[workspace.dependencies]
+openttd-core = { path = "openttd-core" }
+cxx = "1.0.202"
+
+[workspace.lints.rust]
+missing_docs = "warn"
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+# Configured in clippy.toml; denied because they break determinism.
+disallowed_types = "deny"
+
+# Unwinding across the FFI boundary is not allowed; let the crash logger handle aborts.
+# Cargo ignores this setting for tests, which need unwinding.
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+# Overflow is a porting bug: C++ code relying on wrapping must use wrapping_* explicitly.
+overflow-checks = true

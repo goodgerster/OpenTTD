@@ -5,330 +5,105 @@
  * See the GNU General Public License for more details. You should have received a copy of the GNU General Public License along with OpenTTD. If not, see <https://www.gnu.org/licenses/old-licenses/gpl-2.0>.
  */
 
-/** @file bmp.cpp Read and write support for bmps. */
+/**
+ * @file bmp.cpp Read support for bmps.
+ * The decoding is implemented in Rust: openttd_core::bmp (see rust/PORTED.md).
+ */
 
 #include "stdafx.h"
 #include "random_access_file_type.h"
 #include "bmp.h"
-#include "core/bitmath_func.hpp"
+
+#include "openttd_rs_bridge/lib.h"
 
 #include "safeguards.h"
 
 /**
- * Reads a 1 bpp uncompressed bitmap. The bitmap is converted to a 8 bpp bitmap.
- * @copydoc BmpReadBitmap
+ * Read a whole file into memory.
+ * @param file The file to read.
+ * @return The contents of the file, from its start to its end.
  */
-static inline bool BmpRead1(RandomAccessFile &file, BmpInfo &info, BmpData &data)
+static std::vector<uint8_t> ReadFileContents(RandomAccessFile &file)
 {
-	uint8_t pad = GB(4 - info.width / 8, 0, 2);
-	for (uint y = info.height; y > 0; y--) {
-		uint x = 0;
-		uint8_t *pixel_row = &data.bitmap[(y - 1) * static_cast<size_t>(info.width)];
-		while (x < info.width) {
-			if (file.AtEndOfFile()) return false; // the file is shorter than expected
-			uint8_t b = file.ReadByte();
-			for (uint i = 8; i > 0; i--) {
-				if (x < info.width) *pixel_row++ = GB(b, i - 1, 1);
-				x++;
-			}
-		}
-		/* Padding for 32 bit align */
-		file.SkipBytes(pad);
-	}
-	return true;
+	std::vector<uint8_t> contents(file.GetEndPos() - file.GetStartPos());
+	file.SeekTo(file.GetStartPos(), SEEK_SET);
+	file.ReadBlock(contents.data(), contents.size());
+	return contents;
 }
 
 /**
- * Reads a 4 bpp uncompressed bitmap. The bitmap is converted to a 8 bpp bitmap.
- * @copydoc BmpReadBitmap
+ * Reads bitmap headers, and palette (if any).
+ * @param file The contents of the file.
+ * @param[out] info The metadata; \c offset is relative to the start of \a file.
+ * @param[out] data The palette is read into this.
+ * @return \c true iff the file is a BMP in a supported format.
  */
-static inline bool BmpRead4(RandomAccessFile &file, BmpInfo &info, BmpData &data)
-{
-	uint8_t pad = GB(4 - info.width / 2, 0, 2);
-	for (uint y = info.height; y > 0; y--) {
-		uint x = 0;
-		uint8_t *pixel_row = &data.bitmap[(y - 1) * static_cast<size_t>(info.width)];
-		while (x < info.width) {
-			if (file.AtEndOfFile()) return false;  // the file is shorter than expected
-			uint8_t b = file.ReadByte();
-			*pixel_row++ = GB(b, 4, 4);
-			x++;
-			if (x < info.width) {
-				*pixel_row++ = GB(b, 0, 4);
-				x++;
-			}
-		}
-		/* Padding for 32 bit align */
-		file.SkipBytes(pad);
-	}
-	return true;
-}
-
-/**
- * Reads a 4-bit RLE compressed bitmap. The bitmap is converted to a 8 bpp bitmap.
- * @copydoc BmpReadBitmap
- */
-static inline bool BmpRead4Rle(RandomAccessFile &file, BmpInfo &info, BmpData &data)
-{
-	uint x = 0;
-	uint y = info.height - 1;
-	uint8_t *pixel = &data.bitmap[y * static_cast<size_t>(info.width)];
-	while (y != 0 || x < info.width) {
-		if (file.AtEndOfFile()) return false; // the file is shorter than expected
-
-		uint8_t n = file.ReadByte();
-		uint8_t c = file.ReadByte();
-		if (n == 0) {
-			switch (c) {
-				case 0: // end of line
-					x = 0;
-					if (y == 0) return false;
-					pixel = &data.bitmap[--y * static_cast<size_t>(info.width)];
-					break;
-
-				case 1: // end of bitmap
-					return true;
-
-				case 2: { // delta
-					if (file.AtEndOfFile()) return false;
-					uint8_t dx = file.ReadByte();
-					uint8_t dy = file.ReadByte();
-
-					/* Check for over- and underflow. */
-					if (x + dx >= info.width || x + dx < x || dy > y) return false;
-
-					x += dx;
-					y -= dy;
-					pixel = &data.bitmap[y * info.width + x];
-					break;
-				}
-
-				default: { // uncompressed
-					uint i = 0;
-					while (i++ < c) {
-						if (file.AtEndOfFile() || x >= info.width) return false;
-						uint8_t b = file.ReadByte();
-						*pixel++ = GB(b, 4, 4);
-						x++;
-						if (i++ < c) {
-							if (x >= info.width) return false;
-							*pixel++ = GB(b, 0, 4);
-							x++;
-						}
-					}
-					/* Padding for 16 bit align */
-					file.SkipBytes(((c + 1) / 2) % 2);
-					break;
-				}
-			}
-		} else {
-			/* Apparently it is common to encounter BMPs where the count of
-			 * pixels to be written is higher than the remaining line width.
-			 * Ignore the superfluous pixels instead of reporting an error. */
-			uint i = 0;
-			while (x < info.width && i++ < n) {
-				*pixel++ = GB(c, 4, 4);
-				x++;
-				if (x < info.width && i++ < n) {
-					*pixel++ = GB(c, 0, 4);
-					x++;
-				}
-			}
-		}
-	}
-	return true;
-}
-
-/** Reads a 8 bpp bitmap. @copydoc BmpReadBitmap */
-static inline bool BmpRead8(RandomAccessFile &file, BmpInfo &info, BmpData &data)
-{
-	uint8_t pad = GB(4 - info.width, 0, 2);
-	for (uint y = info.height; y > 0; y--) {
-		if (file.AtEndOfFile()) return false; // the file is shorter than expected
-		uint8_t *pixel = &data.bitmap[(y - 1) * static_cast<size_t>(info.width)];
-		for (uint i = 0; i < info.width; i++) *pixel++ = file.ReadByte();
-		/* Padding for 32 bit align */
-		file.SkipBytes(pad);
-	}
-	return true;
-}
-
-/** Reads a 8-bit RLE compressed bpp bitmap. @copydoc BmpReadBitmap */
-static inline bool BmpRead8Rle(RandomAccessFile &file, BmpInfo &info, BmpData &data)
-{
-	uint x = 0;
-	uint y = info.height - 1;
-	uint8_t *pixel = &data.bitmap[y * static_cast<size_t>(info.width)];
-	while (y != 0 || x < info.width) {
-		if (file.AtEndOfFile()) return false; // the file is shorter than expected
-
-		uint8_t n = file.ReadByte();
-		uint8_t c = file.ReadByte();
-		if (n == 0) {
-			switch (c) {
-				case 0: // end of line
-					x = 0;
-					if (y == 0) return false;
-					pixel = &data.bitmap[--y * static_cast<size_t>(info.width)];
-					break;
-
-				case 1: // end of bitmap
-					return true;
-
-				case 2: { // delta
-					if (file.AtEndOfFile()) return false;
-					uint8_t dx = file.ReadByte();
-					uint8_t dy = file.ReadByte();
-
-					/* Check for over- and underflow. */
-					if (x + dx >= info.width || x + dx < x || dy > y) return false;
-
-					x += dx;
-					y -= dy;
-					pixel = &data.bitmap[y * static_cast<size_t>(info.width) + x];
-					break;
-				}
-
-				default: { // uncompressed
-					for (uint i = 0; i < c; i++) {
-						if (file.AtEndOfFile() || x >= info.width) return false;
-						*pixel++ = file.ReadByte();
-						x++;
-					}
-					/* Padding for 16 bit align */
-					file.SkipBytes(c % 2);
-					break;
-				}
-			}
-		} else {
-			/* Apparently it is common to encounter BMPs where the count of
-			 * pixels to be written is higher than the remaining line width.
-			 * Ignore the superfluous pixels instead of reporting an error. */
-			for (uint i = 0; x < info.width && i < n; i++) {
-				*pixel++ = c;
-				x++;
-			}
-		}
-	}
-	return true;
-}
-
-/** Reads a 24 bpp uncompressed bitmap. @copydoc BmpReadBitmap */
-static inline bool BmpRead24(RandomAccessFile &file, BmpInfo &info, BmpData &data)
-{
-	uint8_t pad = GB(4 - info.width * 3, 0, 2);
-	for (uint y = info.height; y > 0; --y) {
-		uint8_t *pixel_row = &data.bitmap[(y - 1) * static_cast<size_t>(info.width) * 3];
-		for (uint x = 0; x < info.width; ++x) {
-			if (file.AtEndOfFile()) return false; // the file is shorter than expected
-			*(pixel_row + 2) = file.ReadByte(); // green
-			*(pixel_row + 1) = file.ReadByte(); // blue
-			*pixel_row       = file.ReadByte(); // red
-			pixel_row += 3;
-		}
-		/* Padding for 32 bit align */
-		file.SkipBytes(pad);
-	}
-	return true;
-}
-
-/** Reads bitmap headers, and palette (if any). @copydoc BmpReadBitmap */
-bool BmpReadHeader(RandomAccessFile &file, BmpInfo &info, BmpData &data)
+bool BmpReadHeader(std::span<const uint8_t> file, BmpInfo &info, BmpData &data)
 {
 	info = {};
 
-	/* Reading BMP header */
-	if (file.ReadWord() != 0x4D42) return false; // signature should be 'BM'
-	file.SkipBytes(8); // skip file size and reserved
-	info.offset = file.ReadDword() + file.GetStartPos();
+	ottd_rs::BmpInfo rs_info{};
+	rust::Vec<ottd_rs::BmpColour> palette;
+	if (!ottd_rs::bmp_read_header(rust::Slice<const uint8_t>(file.data(), file.size()), rs_info, palette)) return false;
 
-	/* Reading info header */
-	uint32_t header_size = file.ReadDword();
-	if (header_size < 12) return false; // info header should be at least 12 bytes long
+	info.offset = rs_info.offset;
+	info.width = rs_info.width;
+	info.height = rs_info.height;
+	info.os2_bmp = rs_info.os2_bmp;
+	info.bpp = rs_info.bpp;
+	info.compression = rs_info.compression;
+	info.palette_size = rs_info.palette_size;
 
-	info.os2_bmp = (header_size == 12); // OS/2 1.x or windows 2.x info header is 12 bytes long
-
-	if (info.os2_bmp) {
-		info.width = file.ReadWord();
-		info.height = file.ReadWord();
-		header_size -= 8;
-	} else {
-		info.width = file.ReadDword();
-		info.height = file.ReadDword();
-		header_size -= 12;
+	data.palette.clear();
+	for (const ottd_rs::BmpColour &rs_colour : palette) {
+		Colour &colour = data.palette.emplace_back();
+		colour.r = rs_colour.r;
+		colour.g = rs_colour.g;
+		colour.b = rs_colour.b;
 	}
-
-	if (file.ReadWord() != 1) return false; // BMP can have only 1 plane
-
-	info.bpp = file.ReadWord();
-	if (info.bpp != 1 && info.bpp != 4 && info.bpp != 8 && info.bpp != 24) {
-		/* Only 1 bpp, 4 bpp, 8bpp and 24 bpp bitmaps are supported */
-		return false;
-	}
-
-	/* Reads compression method if available in info header*/
-	if ((header_size -= 4) >= 4) {
-		info.compression = file.ReadDword();
-		header_size -= 4;
-	}
-
-	/* Only 4-bit and 8-bit rle compression is supported */
-	if (info.compression > 2 || (info.compression > 0 && !(info.bpp == 4 || info.bpp == 8))) return false;
-
-	if (info.bpp <= 8) {
-		/* Reads number of colours if available in info header */
-		if (header_size >= 16) {
-			file.SkipBytes(12);                  // skip image size and resolution
-			info.palette_size = file.ReadDword(); // number of colours in palette
-			file.SkipBytes(header_size - 16);    // skip the end of info header
-		}
-
-		uint maximum_palette_size = 1U << info.bpp;
-		if (info.palette_size == 0) info.palette_size = maximum_palette_size;
-
-		/* More palette colours than palette indices is not supported. */
-		if (info.palette_size > maximum_palette_size) return false;
-
-		data.palette.resize(info.palette_size);
-
-		for (auto &colour : data.palette) {
-			colour.b = file.ReadByte();
-			colour.g = file.ReadByte();
-			colour.r = file.ReadByte();
-			if (!info.os2_bmp) file.SkipBytes(1); // unused
-		}
-	}
-
-	return file.GetPos() <= info.offset;
+	return true;
 }
 
 /**
- * Reads the bitmap
- * 1 bpp and 4 bpp bitmaps are converted to 8 bpp bitmaps
- * @param file The file to read.
- * @param info The already read medata.
- * @param data The buffer to read the image into.
- * @return \c true iff the file could be read without problems.
+ * Reads the bitmap. 1 bpp and 4 bpp bitmaps are converted to 8 bpp bitmaps.
+ * @param file The contents of the file.
+ * @param info The metadata read by BmpReadHeader; \c offset is relative to the start of \a file.
+ * @param[out] data The bitmap is read into this.
+ * @return \c true iff the bitmap could be read without problems.
  */
-bool BmpReadBitmap(RandomAccessFile &file, BmpInfo &info, BmpData &data)
+bool BmpReadBitmap(std::span<const uint8_t> file, const BmpInfo &info, BmpData &data)
 {
 	data.bitmap.resize(static_cast<size_t>(info.width) * info.height * ((info.bpp == 24) ? 3 : 1));
 
-	/* Load image */
-	file.SeekTo(info.offset, SEEK_SET);
-	switch (info.compression) {
-		case 0: // no compression
-			switch (info.bpp) {
-				case 1: return BmpRead1(file, info, data);
-				case 4: return BmpRead4(file, info, data);
-				case 8: return BmpRead8(file, info, data);
-				case 24: return BmpRead24(file, info, data);
-				default: NOT_REACHED();
-			}
-			break;
+	ottd_rs::BmpInfo rs_info{info.offset, info.width, info.height, info.os2_bmp, info.bpp, info.compression, info.palette_size};
+	return ottd_rs::bmp_read_bitmap(rust::Slice<const uint8_t>(file.data(), file.size()), rs_info,
+			rust::Slice<uint8_t>(data.bitmap.data(), data.bitmap.size()));
+}
 
-		case 1: return BmpRead8Rle(file, info, data); // 8-bit RLE compression
-		case 2: return BmpRead4Rle(file, info, data); // 4-bit RLE compression
-		default: NOT_REACHED();
-	}
+/**
+ * Reads bitmap headers, and palette (if any).
+ * @param file The file to read.
+ * @param[out] info The metadata.
+ * @param[out] data The palette is read into this.
+ * @return \c true iff the file is a BMP in a supported format.
+ */
+bool BmpReadHeader(RandomAccessFile &file, BmpInfo &info, BmpData &data)
+{
+	if (!BmpReadHeader(ReadFileContents(file), info, data)) return false;
+	info.offset += file.GetStartPos();
+	return true;
+}
+
+/**
+ * Reads the bitmap. 1 bpp and 4 bpp bitmaps are converted to 8 bpp bitmaps.
+ * @param file The file to read.
+ * @param info The metadata read by BmpReadHeader.
+ * @param[out] data The bitmap is read into this.
+ * @return \c true iff the bitmap could be read without problems.
+ */
+bool BmpReadBitmap(RandomAccessFile &file, BmpInfo &info, BmpData &data)
+{
+	BmpInfo relative_info = info;
+	relative_info.offset -= file.GetStartPos();
+	return BmpReadBitmap(ReadFileContents(file), relative_info, data);
 }

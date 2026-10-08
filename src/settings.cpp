@@ -1779,6 +1779,25 @@ void DeleteGRFPresetFromConfig(std::string_view config_name)
 	ini.SaveToDisk(_config_file);
 }
 
+/** Whether IConsoleSetSetting is changing the settings for new games while a game is running; see there. */
+static bool _changing_newgame_settings_in_game = false;
+
+/**
+ * Whether a change of a setting changes the settings in use: those of the
+ * running game, or the settings for new games while in the main menu.
+ * Post-change callbacks and the game log react only to such changes. A change
+ * to the settings for new games while a game is running must not touch the
+ * running game; doing so would desync multiplayer games.
+ * @param sd The setting that was changed.
+ * @param object The object the setting was changed in.
+ * @return \c true iff the change is to the settings in use.
+ */
+static bool IsChangeOfSettingsInUse(const SettingDesc *sd, const void *object)
+{
+	if (sd->save.global || object != &_settings_newgame) return true;
+	return _game_mode == GameMode::Menu && !_changing_newgame_settings_in_game;
+}
+
 /**
  * Handle changing a value. This performs validation of the input value and
  * calls the appropriate callbacks, and saves it when the value is changed.
@@ -1793,9 +1812,10 @@ void IntSettingDesc::ChangeValue(const void *object, int32_t newval, SaveToConfi
 	if (oldval == newval) return;
 
 	this->Write(object, newval);
-	if (this->post_callback != nullptr) this->post_callback(newval);
+	const bool in_use = IsChangeOfSettingsInUse(this, object);
+	if (this->post_callback != nullptr && in_use) this->post_callback(newval);
 
-	if (this->flags.Test(SettingFlag::NoNetwork) || this->flags.Test(SettingFlag::Sandbox)) {
+	if (in_use && (this->flags.Test(SettingFlag::NoNetwork) || this->flags.Test(SettingFlag::Sandbox))) {
 		GamelogStartAction(GamelogActionType::Setting);
 		GamelogSetting(this->name, oldval, newval);
 		GamelogStopAction();
@@ -2080,7 +2100,7 @@ void StringSettingDesc::ChangeValue(const void *object, std::string &&newval, Sa
 	if (this->pre_check != nullptr && !this->pre_check(newval)) return;
 
 	this->Write(object, newval);
-	if (this->post_callback != nullptr) this->post_callback(newval);
+	if (this->post_callback != nullptr && IsChangeOfSettingsInUse(this, object)) this->post_callback(newval);
 
 	if (_save_config) SaveToConfig(ini_save_flags);
 }
@@ -2106,10 +2126,18 @@ void IConsoleSetSetting(std::string_view name, std::string_view value, bool forc
 		return;
 	}
 
+	/* Validate and apply the change as in the main menu, but without running
+	 * post-change callbacks if a game is running (see IsChangeOfSettingsInUse). */
 	const auto old_game_mode = _game_mode;
-	if (force_newgame) _game_mode = GameMode::Menu;
+	if (force_newgame) {
+		_changing_newgame_settings_in_game = (_game_mode != GameMode::Menu);
+		_game_mode = GameMode::Menu;
+	}
 	auto guard = scope_guard([force_newgame, old_game_mode]() {
-		if (force_newgame) _game_mode = old_game_mode;
+		if (force_newgame) {
+			_game_mode = old_game_mode;
+			_changing_newgame_settings_in_game = false;
+		}
 	});
 
 	bool success = true;

@@ -1,0 +1,11 @@
+# Game state must evolve identically on every client, so types with
+# process-dependent behaviour are banned. Use BTreeMap/BTreeSet, or a hash map
+# with a fixed hasher if iteration order is never observed. Code that genuinely
+# does not affect game state (e.g. performance metrics) may #[allow] locally.
+disallowed-types = [
+    { path = "std::collections::HashMap", reason = "iteration order differs per process; use BTreeMap" },
+    { path = "std::collections::HashSet", reason = "iteration order differs per process; use BTreeSet" },
+    { path = "std::collections::hash_map::RandomState", reason = "randomly seeded per process" },
+    { path = "std::time::SystemTime", reason = "wall-clock time must not influence game state" },
+    { path = "std::time::Instant", reason = "wall-clock time must not influence game state" },
+]

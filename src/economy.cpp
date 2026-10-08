@@ -71,28 +71,14 @@
 
 #include <ranges>
 
+#include "openttd_rs_bridge/lib.h"
+
 #include "safeguards.h"
 
 
 /* Initialize the cargo payment-pool */
 CargoPaymentPool _cargo_payment_pool("CargoPayment");
 INSTANTIATE_POOL_METHODS(CargoPayment)
-
-/**
- * Multiply two integer values and shift the results to right.
- *
- * This function multiplies two integer values. The result is
- * shifted by the amount of shift to right.
- *
- * @param a The first integer
- * @param b The second integer
- * @param shift The amount to shift the value to right.
- * @return The shifted result
- */
-static inline int32_t BigMulS(const int32_t a, const int32_t b, const uint8_t shift)
-{
-	return (int32_t)((int64_t)a * (int64_t)b >> shift);
-}
 
 typedef std::vector<Industry *> SmallIndustryList;
 
@@ -1076,6 +1062,15 @@ Money GetPrice(Price index, uint cost_factor, const GRFFile *grf_file, int shift
 	return cost;
 }
 
+/**
+ * Determine the income for delivering cargo.
+ * @param num_pieces Amount of cargo delivered.
+ * @param dist Distance the cargo was carried.
+ * @param transit_periods Transit time of the cargo, in cargo aging periods.
+ * @param cargo_type Type of the cargo.
+ * @return The income.
+ * @note The arithmetic is implemented in Rust: openttd_core::cargo_income (see rust/PORTED.md).
+ */
 Money GetTransportedGoodsIncome(uint num_pieces, uint dist, uint16_t transit_periods, CargoType cargo_type)
 {
 	const CargoSpec *cs = CargoSpec::Get(cargo_type);
@@ -1091,55 +1086,11 @@ Money GetTransportedGoodsIncome(uint num_pieces, uint dist, uint16_t transit_per
 	if (cs->callback_mask.Test(CargoCallbackMask::ProfitCalc)) {
 		uint32_t var18 = ClampTo<uint16_t>(dist) | (ClampTo<uint8_t>(num_pieces) << 16) | (ClampTo<uint8_t>(transit_periods) << 24);
 		uint16_t callback = GetCargoCallback(CBID_CARGO_PROFIT_CALC, 0, var18, cs);
-		if (callback != CALLBACK_FAILED) {
-			int result = GB(callback, 0, 14);
-
-			/* Simulate a 15 bit signed value */
-			if (HasBit(callback, 14)) result -= 0x4000;
-
-			/* "The result should be a signed multiplier that gets multiplied
-			 * by the amount of cargo moved and the price factor, then gets
-			 * divided by 8192." */
-			return result * num_pieces * cs->current_payment / 8192;
-		}
+		if (callback != CALLBACK_FAILED) return ottd_rs::cargo_income_from_profit_callback(callback, num_pieces, cs->current_payment.base());
 	}
 
-	static const int MIN_TIME_FACTOR = 31;
-	static const int MAX_TIME_FACTOR = 255;
-	static const int TIME_FACTOR_FRAC_BITS = 4;
-	static const int TIME_FACTOR_FRAC = 1 << TIME_FACTOR_FRAC_BITS;
-
-	if (_settings_game.economy.payment_algorithm == CPA_TRADITIONAL) transit_periods = std::min<uint16_t>(transit_periods, 0xFFu);
-
-	const int periods1 = cs->transit_periods[0];
-	const int periods2 = cs->transit_periods[1];
-	const int periods_over_periods1 = std::max(transit_periods - periods1, 0);
-	const int periods_over_periods2 = std::max(periods_over_periods1 - periods2, 0);
-	int periods_over_max = MIN_TIME_FACTOR - MAX_TIME_FACTOR;
-	if (periods2 > -periods_over_max) {
-		periods_over_max += transit_periods - periods1;
-	} else {
-		periods_over_max += 2 * (transit_periods - periods1) - periods2;
-	}
-
-	/*
-	 * The time factor is calculated based on the time it took
-	 * (transit_periods) compared two cargo-depending values. The
-	 * range is divided into four parts:
-	 *
-	 *  - constant for fast transits
-	 *  - linear decreasing with time with a slope of -1 for medium transports
-	 *  - linear decreasing with time with a slope of -2 for slow transports
-	 *  - after hitting MIN_TIME_FACTOR, the time factor will be asymptotically decreased to a limit of 1 with a scaled 1/(x+1) function.
-	 *
-	 */
-	if (periods_over_max > 0) {
-		const int time_factor = std::max(2 * MIN_TIME_FACTOR * TIME_FACTOR_FRAC * TIME_FACTOR_FRAC / (periods_over_max + 2 * TIME_FACTOR_FRAC), 1); // MIN_TIME_FACTOR / (x/(2 * TIME_FACTOR_FRAC) + 1) + 1, expressed as fixed point with TIME_FACTOR_FRAC_BITS.
-		return BigMulS(dist * time_factor * num_pieces, cs->current_payment, 21 + TIME_FACTOR_FRAC_BITS);
-	} else {
-		const int time_factor = std::max(MAX_TIME_FACTOR - periods_over_periods1 - periods_over_periods2, MIN_TIME_FACTOR);
-		return BigMulS(dist * time_factor * num_pieces, cs->current_payment, 21);
-	}
+	return ottd_rs::cargo_income_from_transit_time(num_pieces, dist, transit_periods, cs->transit_periods[0], cs->transit_periods[1],
+			cs->current_payment.base(), _settings_game.economy.payment_algorithm == CPA_TRADITIONAL);
 }
 
 /** The industries we've currently brought cargo to. */

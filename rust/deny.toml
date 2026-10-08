@@ -1,0 +1,28 @@
+# Dependency policy, checked with `cargo deny check` (https://github.com/EmbarkStudios/cargo-deny).
+
+[licenses]
+# OpenTTD is GPL-2.0-only. The FSF considers Apache-2.0 incompatible with
+# GPLv2, so Apache-2.0 is only acceptable as an alternative ("MIT OR
+# Apache-2.0", where MIT is chosen) or for crates that are never linked into
+# the game, listed under `exceptions`.
+allow = ["MIT", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Zlib"]
+unused-allowed-license = "allow"
+confidence-threshold = 0.93
+exceptions = [
+    # Only used by the proc-macro crates (proc-macro2, syn).
+    { allow = ["Unicode-3.0"], crate = "unicode-ident" },
+]
+
+[licenses.private]
+# Our own crates are `publish = false` and GPL-2.0-only like the rest of OpenTTD.
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# Path dependencies between our own crates have no version.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

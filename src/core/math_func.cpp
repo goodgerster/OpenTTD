@@ -11,6 +11,8 @@
 #include "math_func.hpp"
 #include "bitmath_func.hpp"
 
+#include "openttd_rs_bridge/lib.h"
+
 #include "../safeguards.h"
 
 /**
@@ -34,53 +36,26 @@ int DivideApprox(int a, int b)
 	return ret;
 }
 
-template <typename T>
-T IntSqrtImplementation(T num)
-{
-	if (num <= 1) return num;
-
-	/* 'bit' starts at the highest power of four <= the argument. */
-	uint8_t leading_zeroes = std::countl_zero<T>(num) | 1;
-	T bit = static_cast<T>(1) << (std::numeric_limits<T>::digits - leading_zeroes - 1);
-
-
-	T res = 0;
-	while (bit != 0) {
-		if (num >= res + bit) {
-			num -= res + bit;
-			res = (res >> 1) + bit;
-		} else {
-			res >>= 1;
-		}
-		bit >>= 2;
-	}
-
-	/* Arithmetic rounding to nearest integer. */
-	if (num > res) res++;
-
-	return res;
-}
-
 /**
  * Compute the integer square root.
  * @param num Radicand.
  * @return Rounded integer square root.
- * @note Algorithm taken from http://en.wikipedia.org/wiki/Methods_of_computing_square_roots
+ * @note Implemented in Rust: openttd_core::math::int_sqrt_u32 (see rust/PORTED.md).
  */
 uint32_t IntSqrt(uint32_t num)
 {
-	return IntSqrtImplementation<uint32_t>(num);
+	return ottd_rs::int_sqrt_u32(num);
 }
 
 /**
  * Compute the integer square root.
  * @param num Radicand.
  * @return Rounded integer square root.
- * @note Algorithm taken from http://en.wikipedia.org/wiki/Methods_of_computing_square_roots
+ * @note Implemented in Rust: openttd_core::math::int_sqrt_u64 (see rust/PORTED.md).
  */
 uint64_t IntSqrt64(uint64_t num)
 {
-	return IntSqrtImplementation<uint64_t>(num);
+	return ottd_rs::int_sqrt_u64(num);
 }
 
 /**

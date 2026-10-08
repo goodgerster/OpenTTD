@@ -1,0 +1,35 @@
+name: Rust checks
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-checks:
+    name: Rust checks
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v7
+
+    - name: Install Nix
+      uses: cachix/install-nix-action@v31
+      with:
+        extra_nix_config: experimental-features = nix-command flakes
+
+    - name: Format
+      run: nix develop --command cargo fmt --manifest-path rust/Cargo.toml --all --check
+
+    - name: Clippy
+      run: nix develop --command cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets --locked -- -D warnings
+
+    - name: Test
+      run: nix develop --command cargo test --manifest-path rust/Cargo.toml --workspace --locked
+
+    - name: Dependency policy
+      run: nix develop --command cargo deny --manifest-path rust/Cargo.toml check licenses bans sources

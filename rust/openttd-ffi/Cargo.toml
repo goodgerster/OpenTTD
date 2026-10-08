@@ -1,0 +1,18 @@
+[package]
+name = "openttd-ffi"
+description = "C++ bindings for the Rust parts of OpenTTD; the only Rust library linked into the game"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+cxx.workspace = true
+openttd-core.workspace = true
+
+[lints]
+workspace = true

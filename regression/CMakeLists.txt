@@ -22,5 +22,6 @@
 
     add_subdirectory(regression)
     add_subdirectory(stationlist)
+    add_subdirectory(crashed_train_depot)
     add_subdirectory(gs)
     add_subdirectory(gs_compat)

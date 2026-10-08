@@ -1,6 +1,8 @@
 add_test_files(
     alternating_iterator.cpp
     bitmath_func.cpp
+    bmp.cpp
+    cargo_income.cpp
     command.cpp
     enum_over_optimisation.cpp
     flatset_type.cpp
@@ -13,6 +15,7 @@ add_test_files(
     mock_spritecache.cpp
     mock_spritecache.h
     serialisation.cpp
+    settings_newgame.cpp
     string_consumer.cpp
     string_func.cpp
     strings_func.cpp
