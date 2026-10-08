@@ -33,6 +33,7 @@ Without `CMAKE_BUILD_TYPE` (as configured above and by the session hook), `cmake
   - Installs OpenGFX into the baseset directory: `~/.local/share/openttd/baseset` on Linux, `~/Documents/OpenTTD/baseset` on macOS.
   - Configures `build/` as above, as a GUI build, unless it is already configured. It warns if `build/` was configured with a different compiler; delete `build/` to reconfigure.
   - **Cloud, new session only:** builds `build/` in the background. **Wait until `build/warm-build.done` exists** (it holds the exit status) before building or testing in `build/`, and never run two builds in `build/` at once.
+- On macOS, Claude's Bash commands run in a sandbox that only lets them write inside the project. The `sandbox` block in `.claude/settings.json` adds what the build needs: ccache's and Cargo's caches (`~/Library/Caches/ccache`, `~/.cargo/registry`), Nix's cache and daemon socket, and crates.io.
 - A GUI build on Linux needs SDL2 (in the dev shell). Configure with `-DOPTION_DEDICATED=ON` for a headless server; it still compiles nearly all game and GUI code, and only a few `#ifdef DEDICATED` blocks and the video, sound and font drivers differ.
 - CMake 3.22+ is required (for Corrosion, which builds the Rust code). CMake uses the first `rustc` in `PATH`; with rustup instead of Nix, the toolchain pinned in `rust-toolchain.toml` is selected.
 - Build times measured on 4 cores:

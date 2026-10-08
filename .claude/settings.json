@@ -11,5 +11,23 @@
         ]
       }
     ]
+  },
+  "sandbox": {
+    "filesystem": {
+      "allowWrite": [
+        "~/Library/Caches/ccache",
+        "~/.cargo/registry",
+        "~/.cache/nix"
+      ]
+    },
+    "network": {
+      "allowUnixSockets": [
+        "/nix/var/nix/daemon-socket/socket"
+      ],
+      "allowedDomains": [
+        "index.crates.io",
+        "static.crates.io"
+      ]
+    }
   }
 }
